@@ -1,0 +1,514 @@
+---
+title: "Cox regression between baseline frailty and outcomes"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required libraries
+```{r}
+library(ckbplotr)
+library(cowplot)
+library(Epi)        # for float(), which compute floating absolute risks using the method by Easton et al.
+library(kableExtra)
+library(knitr)
+library(survival)   # for Surv(), cox regression
+library(tidyverse)
+```
+
+## Open and process data
+
+Participant list for main analysis
+
+```{r}
+ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds")
+```
+
+Baseline frailty index (excluding cardiovascular deficits)
+
+```{r}
+data_baseline_fi_all = readRDS("J:/R projects/ckb-frailty-index/code/analysis/data_baseline_fi_all.rds")
+
+frailty = data_baseline_fi_all %>% 
+  select(csid, fi = fi.score_no_cv, ficat = fi.cat_no_cv) %>% 
+  filter(csid %in% ptlist_main_analysis)
+```
+
+Baseline covariates
+
+```{r}
+covariates = readRDS("J:/R projects/PhD-by-chapter/rds objects/covariates_for_main_cohort.rds")
+```
+
+Outcome data
+
+```{r}
+events = readRDS("J:/R projects/PhD-by-chapter/rds objects/cvd_event_for_main_cohort.rds")
+```
+
+Merge data
+
+```{r}
+mydata = events %>% 
+  left_join(covariates, by = "csid") %>% 
+  left_join(frailty, by = "csid")
+
+mydata = mydata %>% 
+  mutate_at(c("region_code", "is_female", "household_income", "marital_status", "occupation", "highest_education", "hypertension_diag", "diabetes_diag", "alcohol_category", "smoking_group", "poor_adiposity", "self_rated_health", "poor_diet"), ~as.factor(.))
+
+str(mydata)
+```
+
+Subset data
+
+```{r}
+if (analysis == "no_death_3y"){
+  
+  mydata$days_from_entry_to_death = mydata$date_of_death - mydata$study_date # calculate number of days from study entry to death
+  
+  mydata$death_within_3y_entry = if_else(mydata$days_from_entry_to_death < 365.25*3, 1, 0) # index days less than 3 years
+  
+  mydata = mydata %>% filter(is.na(death_within_3y_entry) | death_within_3y_entry==0) %>% # select participants alive or died after 3 years
+    select(-days_from_entry_to_death, -death_within_3y_entry) # remove variables
+  
+} else if (analysis == "no_cvd_3y"){
+  
+  temp = mydata %>% 
+    select(csid, study_date, contains("total_date"), contains("incidence_date"), contains("fatal_date")) %>% 
+    mutate(
+      across( .cols = c(contains("total_date"), contains("incidence_date"), contains("fatal_date")), ~ .x - study_date) # calculate the time between study entry date and date of event
+    ) %>% 
+    mutate(
+      across( .cols = c(contains("total_date"), contains("incidence_date"), contains("fatal_date")), ~ if_else(.x < 365.25*3, 1, 0)) # index events occurring less than 3 years since study entry
+    ) 
+  
+  temp$index = rowSums(temp[, -c(1:2)], na.rm = TRUE) # index participants with any CV events within 3 years of follow-up
+  temp = temp[temp$index>=1, "csid"] # select these participant IDs
+  
+  mydata = mydata %>% anti_join(temp, by = "csid") # anti_join returns all rows from first table which does not match values from the second
+  
+} else if (analysis == "no_poor_srh"){
+  
+  mydata = mydata %>% filter(!self_rated_health==3) # remove participants who have poor self-rated health at baseline
+  
+  mydata$self_rated_health = droplevels(mydata$self_rated_health) # drop unused factor levels
+  
+} else {
+  
+}
+```
+
+Number of participants included:
+
+  - `r analysis` analysis: `r nrow(mydata)`
+
+Process data
+
+```{r, message=FALSE, warning=FALSE}
+mydata = mydata %>% 
+  mutate_at(vars(contains("_ind")), ~replace(., is.na(.), 0)) # replace missing values with zeros for dummy variables 
+
+mydata = mydata %>% 
+  mutate_at(vars(contains("total_date"), contains("incidence_date"), contains("fatal_date")), ~replace(., is.na(.), censoring_date)) %>% # if empty dates (i.e. no event), then replace empty values with censoring date
+  mutate(
+    across( .cols = c(contains("total_date"), contains("incidence_date"), contains("fatal_date")), ~ .x - study_date) # calculate the time between study entry date and date of event/censoring
+    )
+
+mydata$fi5= factor(ntile(mydata$fi, 5)) # split FI into quintile groups 
+  
+kable(head(mydata)) %>% kableExtra::kable_styling()
+```
+
+```{r, message=FALSE, warning=FALSE}
+mydata %>%
+  ggplot( aes(x=fi, fill=ficat)) +
+    geom_histogram( color="#e9ecef", binwidth=0.01, alpha=0.6, position = 'identity') +
+    #scale_fill_gradient() +
+    theme_minimal() +
+    labs(fill="",
+         x = "FI score",
+         y = "Count")
+
+mydata %>%
+  ggplot( aes(x=fi, fill=fi5)) +
+    geom_histogram( color="#e9ecef", binwidth=0.01, alpha=0.6, position = 'identity') +
+    #scale_fill_gradient() +
+    theme_minimal() +
+    labs(fill="",
+         x = "FI score",
+         y = "Count")
+```
+
+## Prospective association between frailty index (FI) and various cardiovascular events
+
+```{r, eval = FALSE, include = FALSE}
+# Test code for cox model 
+model = survival::coxph(Surv(event_stroke_fatal_date, event_stroke_fatal_ind) ~ ficat + age_at_study_date_x100 + is_female + as.factor(region_code), data = mydata)
+temp = Epi::float(model)
+tab = table(mydata[["ficat"]], mydata[["event_stroke_fatal_ind"]])
+
+model = survival::coxph(Surv(event_stroke_fatal_date, event_stroke_fatal_ind) ~ fi5 + age_at_study_date_x100 + is_female + as.factor(region_code), data = mydata)
+temp = Epi::float(model)
+tab = table(mydata[["fi5"]], mydata[["event_stroke_fatal_ind"]])
+```
+
+```{r coxph}
+# Function to run cox models adjusted for age, sex, and region
+func_coxph_floating_var = function(outcome, frailty){
+  
+  # set up variables as character
+  x = frailty
+  y_date = paste0("event_", outcome, "_date")
+  y_ind = paste0("event_", outcome, "_ind")
+  
+  # formula
+  formula = as.formula(paste("Surv(", y_date, ", ", y_ind, ") ~ ", x," + age_at_study_date_x100 + is_female + region_code"))
+
+  # model
+  model = survival::coxph(formula, data = mydata)
+  temp = Epi::float(model)
+  
+  # numbers
+  tab = table(mydata[[x]], mydata[[y_ind]])
+
+  # Extract data
+  results = data.frame(
+    est = temp$coef,
+    se = sqrt(temp$var),
+    rf = names(temp$coef),
+    n = tab[1:dim(tab)[1], 2] 
+  )
+                       
+  return(results)
+  
+}
+```
+
+```{r}
+# Function to run cox models adjusted for age, sex, and region
+func_coxph_floating_var2 = function(outcome, frailty){
+  
+  # set up variables as character
+  x = frailty
+  y_date = paste0("event_", outcome, "_date")
+  y_ind = paste0("event_", outcome, "_ind")
+  
+  # formula
+  formula = as.formula(paste("Surv(", y_date, ", ", y_ind, ") ~ ", x," + age_at_study_date_x100 + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + met"))
+
+  # model
+  model = survival::coxph(formula, data = mydata)
+  temp = Epi::float(model)
+  
+  # numbers
+  tab = table(mydata[[x]], mydata[[y_ind]])
+
+  # Extract data
+  results = data.frame(
+    est = temp$coef,
+    se = sqrt(temp$var),
+    rf = names(temp$coef),
+    n = tab[1:dim(tab)[1], 2] 
+  )
+                       
+  return(results)
+  
+}
+```
+
+```{r}
+# List outcomes
+list_outcomes = list("Stroke_incidence", "Stroke_fatal", "Stroke_total", 
+                     "Ischaemic_stroke_incidence", "Ischaemic_stroke_fatal", "Ischaemic_stroke_total", 
+                     "Haemorrhagic_stroke_incidence", "Haemorrhagic_stroke_fatal", "Haemorrhagic_stroke_total", 
+                     "IHD_incidence", "IHD_fatal", "IHD_total",
+                     "MI_incidence", "MI_fatal", "MI_total", 
+#TIA_incidence", "TIA_fatal", "TIA_total",
+                     "MVE_incidence", "MVE_fatal", "MVE_total",
+                     "MCE_incidence", "MCE_fatal", "MCE_total",
+                     "Fatal_CVD_total")
+
+# Run cox models for outcomes by frailty categories
+list_input = rep(list("ficat"), length(list_outcomes)) # number of events studied
+
+# Minimally adjuste
+cox_results1 = purrr::map2(list_outcomes, list_input, func_coxph_floating_var)
+
+names(cox_results1) = paste(list_outcomes, list_input)
+
+# Fully adjusted for confounders
+cox_results1a = purrr::map2(list_outcomes, list_input, func_coxph_floating_var2)
+
+names(cox_results1a) = paste(list_outcomes, list_input)
+
+# Run cox models for outcomes by frailty categories
+list_input = rep(list("fi5"), length(list_outcomes)) # number of events studied
+
+# Minimally adjusted
+cox_results2 = purrr::map2(list_outcomes, list_input, func_coxph_floating_var)
+
+names(cox_results2) = paste(list_outcomes, list_input)
+
+# Fully adjusted for confounders
+cox_results2a = purrr::map2(list_outcomes, list_input, func_coxph_floating_var2)
+
+names(cox_results2a) = paste(list_outcomes, list_input)
+```
+
+### Cox regression of outcomes by frailty categories
+
+```{r}
+# Function to make first letters of a word upper case
+firstup = function(x) {
+  substr(x, 1, 1) = toupper(substr(x, 1, 1))
+  x
+}
+```
+
+```{r, eval=FALSE, include=FALSE}
+# testing
+
+paneled_shape_plot = function(x) {
+  plots = list()
+  
+  for (i in 1:length(x)){
+    
+    title = stringr::word(names(x[i]), 1) %>% # extract first word (i.e. all string up to first space)
+    str_replace("_", " ") %>% # replace underscores with a space
+    firstup() # make first letter uppercase
+    
+    x[[i]]$rf = factor(x[[i]]$rf, levels = c("Non-frail", "Pre-frail", "Frail"))
+    
+    plots[[i]] = ckbplotr::make_shape_plot(x[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 3),
+                            ylims          = c(0.85, 2.5),
+                            xlab           = "",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = FALSE)
+    
+  }
+}
+
+paneled_shape_plot(cox_results1)
+```
+
+
+```{r, out.width = "100%"}
+plots1 = list()
+
+for (i in 1:length(cox_results1)){
+  
+  title = stringr::word(names(cox_results1[i]), 1) %>% # extract first word (i.e. all string up to first space)
+    str_replace_all("_", " ") %>% # replace underscores with a space
+    firstup() # make first letter uppercase  
+  
+  cox_results1[[i]]$rf = factor(cox_results1[[i]]$rf, levels = c("Non-frail", "Pre-frail", "Frail"))
+  
+  plots1[[i]] = ckbplotr::make_shape_plot(cox_results1[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 3),
+                            ylims          = c(0.85, 2.5),
+                            xlab           = "",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = FALSE)
+  
+}
+
+plot1a = cowplot::plot_grid(plots1[[1]]$plot, plots1[[2]]$plot, plots1[[3]]$plot, 
+                           plots1[[4]]$plot, plots1[[5]]$plot, plots1[[6]]$plot,
+                           plots1[[7]]$plot, plots1[[8]]$plot, plots1[[9]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1b = cowplot::plot_grid(plots1[[10]]$plot, plots1[[11]]$plot, plots1[[12]]$plot, 
+                           plots1[[13]]$plot, plots1[[14]]$plot, plots1[[15]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1c = cowplot::plot_grid(plots1[[16]]$plot, plots1[[17]]$plot, plots1[[18]]$plot, 
+                           plots1[[19]]$plot, plots1[[20]]$plot, plots1[[21]]$plot,
+                           plots1[[22]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1a
+plot1b
+plot1c
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD1_by_frailty_level_", analysis, ".png"), plot1a, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD2_by_frailty_level_", analysis, ".png"), plot1b, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD3_by_frailty_level_", analysis, ".png"), plot1c, base_height = 8, base_aspect_ratio = 1)
+```
+Cox proportional hazards models adjusted for age, sex and region.
+
+### Cox regression of outcomes by frailty quintile groups
+
+```{r, out.width = "100%"}
+plots2 = list()
+
+for (i in 1:length(cox_results2)){
+  
+  title = stringr::word(names(cox_results2[i]), 1) %>% # extract first word (i.e. all string up to first space)
+    str_replace_all("_", " ") %>% # replace underscores with a space
+    firstup() # make first letter uppercase
+  
+  plots2[[i]] = ckbplotr::make_shape_plot(cox_results2[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 5),
+                            ylims          = c(0.85, 2.2),
+                            xlab           = "",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = FALSE)
+}  
+
+plot2a = cowplot::plot_grid(plots2[[1]]$plot, plots2[[2]]$plot, plots2[[3]]$plot, 
+                           plots2[[4]]$plot, plots2[[5]]$plot, plots2[[6]]$plot,
+                           plots2[[7]]$plot, plots2[[8]]$plot, plots2[[9]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2b = cowplot::plot_grid(plots2[[10]]$plot, plots2[[11]]$plot, plots2[[12]]$plot, 
+                           plots2[[13]]$plot, plots2[[14]]$plot, plots2[[15]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2c = cowplot::plot_grid(plots2[[16]]$plot, plots2[[17]]$plot, plots2[[18]]$plot, 
+                           plots2[[19]]$plot, plots2[[20]]$plot, plots2[[21]]$plot,
+                           plots2[[22]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2a
+plot2b
+plot2c
+
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD1_by_frailty_quintile_", analysis, ".png"), plot2a, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD2_by_frailty_quintile_", analysis, ".png"), plot2b, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD3_by_frailty_quintile_", analysis, ".png"), plot2c, base_height = 8, base_aspect_ratio = 1)
+```
+
+Cox proportional hazards models adjusted for age, sex and region.
+
+#### The same plots with full adjustment of confounders
+
+```{r, out.width = "100%"}
+plots1 = list()
+
+for (i in 1:length(cox_results1a)){
+  
+  title = stringr::word(names(cox_results1a[i]), 1) %>% # extract first word (i.e. all string up to first space)
+    str_replace("_", " ") %>% # replace underscores with a space
+    firstup() # make first letter uppercase  
+  
+  cox_results1a[[i]]$rf = factor(cox_results1a[[i]]$rf, levels = c("Non-frail", "Pre-frail", "Frail"))
+  
+  plots1[[i]] = ckbplotr::make_shape_plot(cox_results1a[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 3),
+                            ylims          = c(0.85, 2.5),
+                            xlab           = "",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = FALSE)
+  
+}
+
+plot1a = cowplot::plot_grid(plots1[[1]]$plot, plots1[[2]]$plot, plots1[[3]]$plot, 
+                           plots1[[4]]$plot, plots1[[5]]$plot, plots1[[6]]$plot,
+                           plots1[[7]]$plot, plots1[[8]]$plot, plots1[[9]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1b = cowplot::plot_grid(plots1[[10]]$plot, plots1[[11]]$plot, plots1[[12]]$plot, 
+                           plots1[[13]]$plot, plots1[[14]]$plot, plots1[[15]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1c = cowplot::plot_grid(plots1[[16]]$plot, plots1[[17]]$plot, plots1[[18]]$plot, 
+                           plots1[[19]]$plot, plots1[[20]]$plot, plots1[[21]]$plot,
+                           plots1[[22]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot1a
+plot1b
+plot1c
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD1_by_frailty_level_fulladj_", analysis, ".png"), plot1a, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD2_by_frailty_level_fulladj_", analysis, ".png"), plot1b, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD3_by_frailty_level_fulladj_", analysis, ".png"), plot1c, base_height = 8, base_aspect_ratio = 1)
+```
+Cox proportional hazards models adjusted for age, sex, region, income, marital status, occupation, education level, hypertension diagnosis, diabetes diagnosis, alcohol category, smoking category, poor adiposity and physical activity. 
+
+```{r, out.width = "100%"}
+plots2 = list()
+
+for (i in 1:length(cox_results2a)){
+  
+  title = stringr::word(names(cox_results2a[i]), 1) %>% # extract first word (i.e. all string up to first space)
+    str_replace("_", " ") %>% # replace underscores with a space
+    firstup() # make first letter uppercase
+  
+  plots2[[i]] = ckbplotr::make_shape_plot(cox_results2a[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 5),
+                            ylims          = c(0.85, 2.2),
+                            xlab           = "",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = FALSE)
+}  
+
+plot2a = cowplot::plot_grid(plots2[[1]]$plot, plots2[[2]]$plot, plots2[[3]]$plot, 
+                           plots2[[4]]$plot, plots2[[5]]$plot, plots2[[6]]$plot,
+                           plots2[[7]]$plot, plots2[[8]]$plot, plots2[[9]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2b = cowplot::plot_grid(plots2[[10]]$plot, plots2[[11]]$plot, plots2[[12]]$plot, 
+                           plots2[[13]]$plot, plots2[[14]]$plot, plots2[[15]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2c = cowplot::plot_grid(plots2[[16]]$plot, plots2[[17]]$plot, plots2[[18]]$plot, 
+                           plots2[[19]]$plot, plots2[[20]]$plot, plots2[[21]]$plot,
+                           plots2[[22]]$plot,
+                           ncol=3, nrow=3, align = "hv")
+
+plot2a
+plot2b
+plot2c
+
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD1_by_frailty_quintile_fulladj_", analysis, ".png"), plot2a, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD2_by_frailty_quintile_fulladj_", analysis, ".png"), plot2b, base_height = 8, base_aspect_ratio = 1)
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/HRplots_CVD3_by_frailty_quintile_fulladj_", analysis, ".png"), plot2c, base_height = 8, base_aspect_ratio = 1)
+```
+Cox proportional hazards models adjusted for age, sex, region, income, marital status, occupation, education level, hypertension diagnosis, diabetes diagnosis, alcohol category, smoking category, poor adiposity and physical activity. 
