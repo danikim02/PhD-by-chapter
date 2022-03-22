@@ -1,0 +1,183 @@
+---
+title: "Flow diagram of participants"
+output: html_document
+date: '2022-03-14'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required libraries
+```{r}
+library(kableExtra)
+library(knitr)
+library(tidyverse)
+```
+
+## Open data
+
+### Baseline data
+
+```{r}
+# Define pathway of raw dataset
+mypath = "J:/R projects/PhD-by-chapter/data/raw_data/"
+
+data_base = read.csv(file = paste0(mypath, 'data_baseline_questionnaires.csv'))
+```
+
+### Definitions
+
+```{r}
+# Column details
+column_det = read.csv(file = paste0(mypath, 'column_details.csv'))
+
+# Value definitions
+value_def = read.csv(file = paste0(mypath, 'value_definitions.csv'))
+```
+
+### Select variables of interest
+
+```{r}
+varnames = c("csid",
+  "age_at_study_date_x100",
+  "region_code",
+  "is_female",
+  
+  # demographics
+  "household_income",
+  "marital_status",
+  "occupation",
+  "highest_education",
+  
+  # disease
+  "chd_diag",
+  "stroke_or_tia_diag",
+  
+  # covariates
+  "bmi_calc", "waist_hip_ratio",
+  "met",
+  "sbp_mean", "dbp_mean", "hypertension_diag", "used_blood_pressure_drugs",
+  "fasting_glucose_x10", "random_glucose_x10", "diabetes_diag", "taking_insulin",
+  "smoking_category", "smoking_stopped_reason",
+  "alcohol_category",
+  "diet_freq_fresh_fruit", "diet_freq_fresh_veg", "diet_freq_meat",
+  
+  # frailty-related
+  "emph_bronc_diag", 
+  "tb_diag", 
+  "asthma_diag", 
+  "peptic_ulcer_diag", 
+  "gall_diag", 
+  "rheum_arthritis_diag", 
+  "fracture_diag", 
+  "neurasthenia_diag", 
+  "cancer_diag", 
+  "kidney_dis_diag", 
+  "continuous_pain", 
+  #"chd_diag", 
+  #"stroke_or_tia_diag", 
+  "bowel_movement_freq", 
+  "heart_rate_mean", 
+  #"bmi", 
+  "cough_freq", 
+  "gum_bleed_freq", 
+  #"diabetes", 
+  #"hypertension", 
+  #"met_low", 
+  "self_rated_health", 
+  "has_copd", 
+  "sleep_affects_day", "sleep_delayed_fitful", "sleep_waking_too_early", 
+  #"waist_to_hip",
+  "walking_short_of_breath", "walking_slow_down", 
+  "tried_to_reduce_weight", "weight_changed"
+)
+
+mydata = data_base[, varnames]
+```
+
+## Count participants for flow diagram
+
+Total participants
+
+```{r}
+nrow(mydata)
+```
+
+## Missing data
+
+```{r}
+# Count number of missing values per variable
+na_count = sapply(mydata, function(x) sum(length(which(is.na(x)))))
+
+na_count = data.frame(na_count)
+
+kable(na_count)
+```
+
+### Exclusion by baseline disease 
+
+Has CHD at baseline
+```{r}
+table(mydata$chd_diag)
+```
+Has stroke/TIA at baseline
+```{r}
+table(mydata$stroke_or_tia_diag)
+```
+Has CHD or stroke/TIA at baseline
+```{r}
+mydata$chd_stroke_tia = if_else(mydata$chd_diag==1 | mydata$stroke_or_tia_diag==1, 1, 0)
+table(mydata$chd_stroke_tia)
+```
+CVD-free participants at baseline
+```{r}
+mydata2 = mydata[mydata$chd_stroke_tia==0,]
+nrow(mydata2)
+```
+
+### Exclusion by baseline variables
+
+```{r}
+mydata_num = mydata2[, c("age_at_study_date_x100", "bmi_calc", "met", "sbp_mean", "dbp_mean", "fasting_glucose_x10", "random_glucose_x10", "heart_rate_mean")]
+
+
+sapply(names(mydata_num), 
+       function(x) {
+         hist(mydata_num[[x]], main = x)
+       }
+)
+```
+
+Blood pressure SBP<80 or ≥250 or DBP<40 or ≥150 (Lacey et al., 2018)
+
+```{r}
+length(which(mydata2$sbp_mean<80))
+length(which(mydata2$sbp_mean>=250))
+length(which(mydata2$dbp_mean<40))
+length(which(mydata2$dbp_mean>=150))
+
+mydata2$extreme_bp = if_else(mydata2$sbp_mean<80 | mydata2$sbp_mean>=250 | mydata2$dbp_mean<40 | mydata2$dbp_mean>=150, 1, 0)
+
+length(which(mydata2$extreme_bp==1))
+```
+
+## Participants included for main analysis
+
+Excluded the following:
+
+  - 2 missing BMI
+  - 23129 has CHD or stroke/TIA at baseline
+  - 147 extreme BP values
+  
+```{r}
+ptlist_main_analysis = mydata2[mydata2$extreme_bp==0 & !is.na(mydata2$bmi_calc), ] %>% pull(csid) 
+
+length(ptlist_main_analysis)
+```
+Save list of participants included for main analysis
+
+```{r}
+saveRDS(ptlist_main_analysis, file = "J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds")
+```
+
