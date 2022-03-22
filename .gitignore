@@ -1,0 +1,16 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# ignore all files in the data folder
+data/*
+rds objects/*
+
+# ignore the following data files 
+*.xlsx
+*.tiff
+*.png
+*.html
+*.rds
+*.pdf
