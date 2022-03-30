@@ -21,44 +21,16 @@ library(tidyverse)
 
 ## Open and process data
 
-Participant list for main analysis
+Run external script to open and process data
 
-```{r}
-ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds")
+```{r open-data}
+# Source script that creates working dataset that includes baseline frailty scores and CVD outcomes with key baseline covariates
+source("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/source/script to open and process dataset to analyse baseline frailty and outcomes.R")
 ```
 
-Baseline frailty index (excluding cardiovascular deficits)
+Data structure
 
-```{r}
-data_baseline_fi_all = readRDS("J:/R projects/ckb-frailty-index/code/analysis/data_baseline_fi_all.rds")
-
-frailty = data_baseline_fi_all %>% 
-  select(csid, fi = fi.score_no_cv, ficat = fi.cat_no_cv) %>% 
-  filter(csid %in% ptlist_main_analysis)
-```
-
-Baseline covariates
-
-```{r}
-covariates = readRDS("J:/R projects/PhD-by-chapter/rds objects/covariates_for_main_cohort.rds")
-```
-
-Outcome data
-
-```{r}
-events = readRDS("J:/R projects/PhD-by-chapter/rds objects/cvd_event_for_main_cohort.rds")
-```
-
-Merge data
-
-```{r}
-mydata = events %>% 
-  left_join(covariates, by = "csid") %>% 
-  left_join(frailty, by = "csid")
-
-mydata = mydata %>% 
-  mutate_at(c("region_code", "is_female", "household_income", "marital_status", "occupation", "highest_education", "hypertension_diag", "diabetes_diag", "alcohol_category", "smoking_group", "poor_adiposity", "self_rated_health", "poor_diet"), ~as.factor(.))
-
+```{r data-structure}
 str(mydata)
 ```
 
