@@ -1,0 +1,224 @@
+---
+title: 'Cox regression between baseline frailty and outcomes: age-at-risk stratification'
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required libraries
+
+```{r library}
+library(ckbplotr)
+library(cowplot)
+library(data.table)
+library(Epi)        # for float(), which compute floating absolute risks using the method by Easton et al.
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(survival)   # for Surv(), cox regression
+library(tidyverse)
+```
+
+## Open and process data
+
+Run external script to open and process data
+
+```{r open-data}
+# Source script that creates working dataset that includes baseline frailty scores and CVD outcomes with key baseline covariates
+source("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/source/script to open and process dataset to analyse baseline frailty and outcomes.R")
+```
+
+Data structure
+
+```{r data-structure}
+str(mydata)
+```
+
+Number of participants included:
+
+  - FI analysis: `r nrow(mydata)`
+
+Further process data for age-at-risk analysis to have following variables:
+
+  - csid
+  - dob_anon
+  - study_date
+  - endpoint - binary variable indicating the endpoint (1/0)
+  - endpoint_date - date of endpoint event or censoring
+  - frailty quintile group
+  - outcome_type - indicate outcome type, e.g. stroke, MI, etc.
+
+```{r data-process, message=FALSE, warning=FALSE}
+mydata = mydata %>% 
+  mutate_at(vars(contains("_ind")), ~replace(., is.na(.), 0)) # replace missing values with zeros for dummy variables 
+
+mydata = mydata %>% 
+  mutate_at(vars(contains("total_date"), contains("incidence_date"), contains("fatal_date"), date_of_death), ~replace(., is.na(.), censoring_date)) # if empty dates (i.e. no event), then replace empty values with censoring date
+
+kable(head(mydata)) %>% kableExtra::kable_styling()
+```
+
+Split FI into quintile groups
+
+```{r fi-process, eval=FALSE, include=FALSE}
+mydata$fi5= factor(ntile(mydata$fi.score_no_cv, 5)) # split FI into quintile groups 
+mydata$ficat = mydata$fi.cat_no_cv
+```
+
+```{r fi-type}
+if (fi_type == "original"){
+  
+  mydata$fi5= factor(ntile(mydata$fi.score_full, 5)) # split FI into quintile groups 
+  mydata$ficat = mydata$fi.cat_full
+
+} else if (fi_type == "modified"){
+  
+  mydata$fi5= factor(ntile(mydata$fi.score_no_cv, 5)) # split FI into quintile groups 
+  mydata$ficat = mydata$fi.cat_no_cv
+  
+} else {
+   
+}
+```
+
+Make outcome data long
+
+```{r make-data-long}
+temp = mydata %>% 
+  select(csid, event_All_cause_mortality_ind = died, event_All_cause_mortality_date = date_of_death, contains("event_"))
+
+temp = pivot_longer(temp, cols = -1, names_pattern = "(.*)(ind|date)$", names_to = c("names", ".value"))
+  # names_pattern = ()()  means look for 2 parts; (.*) means first part should have zero or more characters; (ind|date)$ means the second part should end either as ind or date
+
+temp$names = as.factor(temp$names)
+```
+
+Split data on outcome and save as list
+
+```{r split-data}
+mylist = split(temp, f = temp$names)
+```
+
+## Age-at-risk stratified Cox proportional hazards model
+
+Create function to run analysis
+
+```{r create-function-age-at-risk}
+source("J:/R projects/PhD-by-chapter/source codes/ckb resources/expand_age_at_risk.R")
+
+run_age_at_risk_cox_model = function(dataset, frailty, sex){
+  
+  # Variable input character will not be recognised in dplyr
+  x = sym(frailty)
+  
+  # Merge dob_anon, study_date and rename variables
+  dataset = dataset %>% 
+    left_join(select(mydata, csid, dob_anon, study_date, !!x, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
+    select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, !!x, is_female)
+  
+  if (sex == "F"){
+    
+    dataset = dataset[dataset$is_female == 1, ]
+    
+    formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", frailty," + strata(as.factor(XAgeGrp)) + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + poor_diet + met"))
+    
+  } else if (sex == "M"){
+    
+    dataset = dataset[dataset$is_female == 0, ]
+    
+    formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", frailty," + strata(as.factor(XAgeGrp)) + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + poor_diet + met"))
+    
+  } else if (sex == "T"){
+    
+    dataset = dataset
+    
+    formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", frailty," + strata(as.factor(XAgeGrp)) + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + poor_diet + met"))
+    
+  } else {
+  }
+  
+  # Expand data by age-at-risk
+  dataset_long = expand_age_at_risk(df = dataset,
+                                    ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+  #head(dataset_long)
+  
+  # Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+  to_merge = mydata %>% 
+    select(csid, !!x, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, poor_adiposity, poor_diet)
+  
+  dataset_long = left_join(dataset_long, to_merge, by = "csid")
+  
+  # Cox proportional hazards model
+  fit = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
+  #summary(fit)
+  
+  # Floating absolute risk
+  float = Epi::float(fit) # calculate the floating variances (Plummer method)
+  #float
+  
+  # numbers
+  tab = table(dataset[[frailty]], dataset[["endpoint"]])
+  
+  # Extract data
+  results = data.frame(
+    est = float$coef,
+    se = sqrt(float$var),
+    rf = names(float$coef),
+    n = tab[1:dim(tab)[1], 2] 
+    )
+
+  return(results)
+  
+}  
+```
+
+Run function on each outcome
+
+```{r run-age-at-risk-analysis, message=FALSE, error=FALSE}
+hrlist_fi5_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "T")
+hrlist_fi5_m = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "M")
+hrlist_fi5_f = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "F")
+
+hrlist_ficat_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "T")
+hrlist_ficat_m = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "M")
+hrlist_ficat_f = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "F")
+```
+
+Rename and reorder list
+
+```{r rename-and-reorder-list}
+# Function to rename and reorder list
+rename_reorder_list = function(mylist){
+  
+  # Rename list using stringr
+  names(mylist) = stringr::word(stringr::str_replace_all(names(mylist), "_", " ") # replace all underscore with space
+                                  , start=2, end=-2) # extract string from 2 word until last second word
+  
+  # Reorder list elements
+  mylist = mylist[c("Stroke incidence", "Stroke fatal", "Stroke total",
+                    "Ischaemic stroke incidence", "Ischaemic stroke fatal", "Ischaemic stroke total",
+                    "Haemorrhagic stroke incidence", "Haemorrhagic stroke fatal", "Haemorrhagic stroke total",
+                    "IHD incidence", "IHD fatal", "IHD total",
+                    "MI incidence", "MI fatal", "MI total",
+                    "MVE incidence", "MVE fatal", "MVE total",
+                    "MCE incidence", "MCE fatal", "MCE total",
+                    "Fatal CVD total", "All cause mortality")]
+}
+
+hrlist = list(hrlist_fi5_t, hrlist_fi5_m, hrlist_fi5_f,
+              hrlist_ficat_t, hrlist_ficat_m, hrlist_ficat_f)
+
+names(hrlist) = c("HRs FI quintile and outcomes overall", "HRs FI quintile and outcomes in male", "HRs FI quintile and outcomes in female",
+                  "HRs FI level and outcomes overall", "HRs FI level and outcomes in male", "HRs FI level and outcomes in female")
+
+hrlist = lapply(hrlist, rename_reorder_list)
+```
+
+Save output for plotting later
+
+```{r save-output}
+saveRDS(hrlist, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (", fi_type, ") and outcomes.rds"))
+```
