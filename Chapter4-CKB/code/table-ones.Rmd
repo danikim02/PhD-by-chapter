@@ -44,7 +44,7 @@ myvars = c("age_at_study_date", "age_group", "region_is_urban", "marital_status_
            "smoking_group", "alcohol_category",
            "daily_fresh_fruit", "daily_fresh_veg", "daily_meat",
            "met", "self_rated_health",
-           "chd_diag", "stroke_or_tia_diag", "hypertension_diag", "diabetes_diag", "copd_diag", "cancer_diag", "kidney_dis_diag")
+           "asthma_diag", "cancer_diag", "chd_diag",  "cirrhosis_hep_diag", "copd_diag", "diabetes_diag", "emph_bronc_diag", "fracture_diag", "gall_diag",  "hypertension_diag", "kidney_dis_diag", "neurasthenia_diag", "peptic_ulcer_diag", "rheum_arthritis_diag", "rheum_heart_dis_diag", "stroke_or_tia_diag", "tb_diag")
 
 table2_sex = tableone::CreateTableOne(vars = myvars, strata = "is_female", data = mydata)
 table2_tot = tableone::CreateTableOne(vars = myvars, data = mydata)
@@ -66,17 +66,17 @@ table3_sex = print(table3_sex)
 table3_tot = print(table3_tot)
 ```
 
-## Baseline demographic and lifestyle characteristics of recruited participants, by prevalent heart disease
+## Baseline demographic and lifestyle characteristics of recruited participants, by first resurvey follow-up
 
 ```{r}
 myvars = c("age_at_study_date", "age_group", "region_is_urban", "marital_status_group", "highest_education", "household_income", "occupation", 
            "smoking_group", "alcohol_category",
            "daily_fresh_fruit", "daily_fresh_veg", "daily_meat",
            "met", "self_rated_health",
-           "chd_diag", "stroke_or_tia_diag", "hypertension_diag", "diabetes_diag", "copd_diag", "cancer_diag", "kidney_dis_diag")
+           "asthma_diag", "cancer_diag", "chd_diag",  "cirrhosis_hep_diag", "copd_diag", "diabetes_diag", "emph_bronc_diag", "fracture_diag", "gall_diag",  "hypertension_diag", "kidney_dis_diag", "neurasthenia_diag", "peptic_ulcer_diag", "rheum_arthritis_diag", "rheum_heart_dis_diag", "stroke_or_tia_diag", "tb_diag")
 
-table4_tot = tableone::CreateTableOne(vars = myvars, strata = "main_analysis", data = mydata)
-table4_sex = tableone::CreateTableOne(vars = myvars, strata = c("main_analysis", "is_female"), data = mydata)
+table4_tot = tableone::CreateTableOne(vars = myvars, strata = "fu_resurvey1", data = mydata)
+table4_sex = tableone::CreateTableOne(vars = myvars, strata = c("fu_resurvey1", "is_female"), data = mydata)
 
 table4_tot = print(table4_tot, nonnormal = c("met"))
 table4_sex = print(table4_sex, nonnormal = c("met"))
@@ -88,8 +88,8 @@ table4_sex = print(table4_sex, nonnormal = c("met"))
 myvars = c("bmi_calc", "bmi_group", "waist_hip_ratio", "whr_group", "fat_percent", "fat_body_mass_kg", "lean_body_mass_kg", 
            "sbp_mean", "sbp_group", "random_glucose", "random_glucose_group")
 
-table5_tot = tableone::CreateTableOne(vars = myvars, strata = "main_analysis", data = mydata)
-table5_sex = tableone::CreateTableOne(vars = myvars, strata = c("main_analysis", "is_female"), data = mydata)
+table5_tot = tableone::CreateTableOne(vars = myvars, strata = "fu_resurvey1", data = mydata)
+table5_sex = tableone::CreateTableOne(vars = myvars, strata = c("fu_resurvey1", "is_female"), data = mydata)
 
 table5_tot = print(table5_tot)
 table5_sex = print(table5_sex)
@@ -103,8 +103,8 @@ write.csv(table2_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1
 write.csv(table2_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline characteristic by sex.csv")
 write.csv(table3_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp total CKB.csv")
 write.csv(table3_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp by sex.csv")
-write.csv(table4_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline characteristic by prev heart dis.csv")
-write.csv(table4_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline characteristic by prev heart dis and sex.csv")
-write.csv(table5_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp by prev heart dis.csv")
-write.csv(table5_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp by prev heart dis and sex.csv")
+write.csv(table4_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline characteristic by resurvey1 follow-up.csv")
+write.csv(table4_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline characteristic by resurvey1 follow-up and sex.csv")
+write.csv(table5_tot, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp by resurvey1 follow-up.csv")
+write.csv(table5_sex, "J:/R projects/PhD-by-chapter/Chapter4-CKB/outputs/Table 1s/baseline adiposity and sbp by resurvey1 follow-up and sex.csv")
 ```
