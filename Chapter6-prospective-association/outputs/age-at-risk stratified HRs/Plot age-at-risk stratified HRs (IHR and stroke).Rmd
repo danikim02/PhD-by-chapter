@@ -1,0 +1,412 @@
+---
+title: "Age-at-risk stratified Cox PH analysis plots"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+
+```{r}
+library(ckbplotr)
+library(cowplot)
+library(tidyverse)
+```
+
+## Open HRs 
+
+HRs between baseline frailty and outcomes were stored in an RDS object (nested list structure)
+
+```{r}
+#hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI and outcomes.rds")
+hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (modified) and stroke and IHD.rds")
+hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline SRH and stroke and IHD.rds")
+```
+
+Nested within each of the `r length(hrlist)` list elements:
+
+```{r}
+names(hrlist)
+```
+
+Are HRs between baseline frailty and the following 23 outcomes:
+
+```{r}
+names(hrlist[[1]])
+```
+
+Select IHD total and stroke total using continuous exposure
+
+```{r}
+#hrlist = hrlist[[1]][c("IHD total", "Stroke total")]
+```
+
+Rename list
+
+```{r}
+names(hrlist) = c("IHD", "Stroke")
+```
+
+## Age-at-risk stratified HRs between baseline frailty and outcomes
+
+Cox proportional hazards models were adjusted for age-at-risk (5 year groups), sex (when appropriate), region, income, marital status, occupation, education level, hypertension diagnosis, diabetes diagnosis, alcohol category, smoking category, poor adiposity, poor diet, and physical activity.
+
+### HRs for total participants 
+
+Baseline exposure (SRH/FI quintiles) and outcomes
+
+```{r eval=FALSE, fig.width=10, fig.height=10}
+plots = list()
+
+for (i in 1:length(hrlist)){
+  
+  title = names(hrlist[i]) 
+  
+  hrlist[[i]]$rf = paste0("Quintile ", c(1:5))
+  
+  plots[[i]] = ckbplotr::make_shape_plot(hrlist[[i]],
+                            col.x          = "rf",
+                            col.estimate   = "est",
+                            col.stderr     = "se",
+                            col.n          = "n",
+                            exponentiate   = TRUE, 
+                            xlims          = c(1, 5),
+                            ylims          = c(0.85, 2),
+                            ybreaks        = c(1, 1.5, 2),
+                            xlab           = "Frailty index",
+                            ylab           = "Hazard ratio (95% CI)",
+                            scalepoints    = TRUE,
+                            title          = title,
+                            printplot      = FALSE, 
+                            showcode = TRUE)
+  
+}
+
+plot1 = cowplot::plot_grid(plots[[1]]$plot, plots[[2]]$plot,
+                            ncol=2, nrow=2, align = "hv")
+
+plot1
+
+#cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, " FI/HRplots_FI", fi_type, "_quintile_CVD1_fulladj.png"), plot1a, base_height = 8, base_aspect_ratio = 1)
+```
+
+*Frailty and CVD*
+
+Plot for IHD
+
+```{r}
+# Create the ggplot
+plot <- ggplot(data = hrlist[[1]][[1]],
+               aes(x = rf, y = exp(est))) +
+
+  # Plot the point estimates
+  geom_point(aes(size = 1/se),
+             shape = 22,
+             colour = "black",
+             fill = "black",
+             stroke = 0.5) +
+  
+  # Plot point estimates text
+  geom_text(aes(y = exp(est+1.96*se),
+                label = format(round(exp(est), 2), nsmall = 2)),
+            vjust = -0.8,
+            size  = 3) +
+  
+  # Plot n events text
+  geom_text(aes(y = exp(est-1.96*se),
+                label = n),
+            vjust = 1.8,
+            size  = 3) +
+  
+  # Plot the CIs
+  geom_linerange(aes(ymin = exp(est-1.96*se),
+                     ymax = exp(est+1.96*se)),
+                 colour = "black",
+                 lwd = 0.5) +
+  
+  # Set the scale for the size of boxes
+  scale_radius(guide  = "none",
+               limits = c(0, NA_real_),
+               range  = c(0, 3)) +
+  
+  # Use identity for aesthetic scales
+  scale_shape_identity() +
+  scale_colour_identity() +
+  scale_fill_identity() +
+  
+  # Set the y-axis scale
+  scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
+  
+  # Add titles
+  xlab("Frailty index quintiles") +
+  ylab("Hazard ratio (95% CI)") +
+  ggtitle("IHD") +
+
+  # Plot n events text and HRs per 1SD increase in FI
+  geom_text(aes(y = 1.99,
+                x = 3,
+                label = "(49,937 cases)"),
+            size  = 3) +
+  geom_text(aes(y = 1.75,
+                x = 3,
+                label = "HR (95%CI): 1.16 (1.14-1.17)\nper 1SD increase"),
+            size  = 3.5)
+  
+# Plot like a CKB plot
+plot_ihd = ckbplotr::plot_like_ckb(plot           = plot,
+                                   xlims          = c(1, 5),
+                                   ylims          = c(0.85, 2),
+                                   gap            = c(0.05, 0.025),
+                                   ext            = c(0.025, 0.025),
+                                   ratio          = 1.5,
+                                   base_size      = 11,
+                                   base_line_size = 0.5)
+```
+
+Plot for stroke
+```{r}
+# Create the ggplot
+plot <- ggplot(data = hrlist[[2]][[1]],
+               aes(x = rf, y = exp(est))) +
+
+  # Plot the point estimates
+  geom_point(aes(size = 1/se),
+             shape = 22,
+             colour = "black",
+             fill = "black",
+             stroke = 0.5) +
+  
+  # Plot point estimates text
+  geom_text(aes(y = exp(est+1.96*se),
+                label = format(round(exp(est), 2), nsmall = 2)),
+            vjust = -0.8,
+            size  = 3) +
+  
+  # Plot n events text
+  geom_text(aes(y = exp(est-1.96*se),
+                label = n),
+            vjust = 1.8,
+            size  = 3) +
+  
+  # Plot the CIs
+  geom_linerange(aes(ymin = exp(est-1.96*se),
+                     ymax = exp(est+1.96*se)),
+                 colour = "black",
+                 lwd = 0.5) +
+  
+  # Set the scale for the size of boxes
+  scale_radius(guide  = "none",
+               limits = c(0, NA_real_),
+               range  = c(0, 3)) +
+  
+  # Use identity for aesthetic scales
+  scale_shape_identity() +
+  scale_colour_identity() +
+  scale_fill_identity() +
+  
+  # Set the y-axis scale
+  scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
+  
+  # Add titles
+  xlab("Frailty index quintiles") +
+  ylab("Hazard ratio (95% CI)") +
+  ggtitle("Stroke") +
+
+  # Plot n events text and HRs per 1SD increase in FI
+  geom_text(aes(y = 1.99,
+                x = 3,
+                label = "(54,193 cases)"),
+            size  = 3) +
+  geom_text(aes(y = 1.75,
+                x = 3,
+                label = "HR (95%CI): 1.07 (1.06-1.08)\nper 1SD increase"),
+            size  = 3.5)
+  
+  # Plot like a CKB plot
+  plot_stroke = ckbplotr::plot_like_ckb(plot           = plot,
+                                       xlims          = c(1, 5),
+                                       ylims          = c(0.85, 2),
+                                       gap            = c(0.05, 0.025),
+                                       ext            = c(0.025, 0.025),
+                                       ratio          = 1.5,
+                                       base_size      = 11,
+                                       base_line_size = 0.5)
+ 
+```
+
+Combine and save plot
+```{r, fig.width=10, fig.height=10}
+p = cowplot::plot_grid(plot_stroke, plot_ihd,
+                           ncol=2, nrow=1, align = "hv")
+
+title = ggdraw() + draw_label("Figure 1. Association between baseline frailty index, stroke, and IHD", fontface='bold')
+
+plot1 = plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1)) # rel_heights values control title margins
+plot1
+
+cowplot::save_plot("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/modified FI/HRplots_FImodified_quintile_IHDStroke_fulladj.png", plot1, base_height = 6, base_aspect_ratio = 1.5)
+```
+
+*SRH and CVD*
+
+Plot for IHD
+
+```{r}
+# Create the ggplot
+plot <- ggplot(data = hrlist[[1]][[1]],
+               aes(x = rf, y = exp(est))) +
+
+  # Plot the point estimates
+  geom_point(aes(size = 1/se),
+             shape = 22,
+             colour = "black",
+             fill = "black",
+             stroke = 0.5) +
+  
+  # Plot point estimates text
+  geom_text(aes(y = exp(est+1.96*se),
+                label = format(round(exp(est), 2), nsmall = 2)),
+            vjust = -0.8,
+            size  = 3) +
+  
+  # Plot n events text
+  geom_text(aes(y = exp(est-1.96*se),
+                label = n),
+            vjust = 1.8,
+            size  = 3) +
+  
+  # Plot the CIs
+  geom_linerange(aes(ymin = exp(est-1.96*se),
+                     ymax = exp(est+1.96*se)),
+                 colour = "black",
+                 lwd = 0.5) +
+  
+  # Set the scale for the size of boxes
+  scale_radius(guide  = "none",
+               limits = c(0, NA_real_),
+               range  = c(0, 3)) +
+  
+  # Use identity for aesthetic scales
+  scale_shape_identity() +
+  scale_colour_identity() +
+  scale_fill_identity() +
+  
+  # Set the y-axis scale
+  scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
+  # Set the x-axis scale
+  scale_x_discrete(labels = c("Excellent", "Good", "Fair", "Poor")) +
+  
+  # Add titles
+  xlab("Self-rated health") +
+  ylab("Hazard ratio (95% CI)") +
+  ggtitle("IHD") +
+
+  # Plot n events text and HRs per 1SD increase in FI
+  geom_text(aes(y = 1.99,
+                x = 2.5,
+                label = "(49,937 cases)"),
+            size  = 3) +
+  geom_text(aes(y = 1.75,
+                x = 2.5,
+                label = "HR (95%CI): 1.15 (1.14-1.16)\nper 1SD increase"),
+            size  = 3.5)
+  
+# Plot like a CKB plot
+plot_ihd = ckbplotr::plot_like_ckb(plot           = plot,
+                                   xlims          = c(1, 4),
+                                   ylims          = c(0.85, 2),
+                                   gap            = c(0.05, 0.025),
+                                   ext            = c(0.025, 0.025),
+                                   ratio          = 1.5,
+                                   base_size      = 11,
+                                   base_line_size = 0.5)
+```
+
+Plot for stroke
+```{r}
+# Create the ggplot
+plot <- ggplot(data = hrlist[[2]][[1]],
+               aes(x = rf, y = exp(est))) +
+
+  # Plot the point estimates
+  geom_point(aes(size = 1/se),
+             shape = 22,
+             colour = "black",
+             fill = "black",
+             stroke = 0.5) +
+  
+  # Plot point estimates text
+  geom_text(aes(y = exp(est+1.96*se),
+                label = format(round(exp(est), 2), nsmall = 2)),
+            vjust = -0.8,
+            size  = 3) +
+  
+  # Plot n events text
+  geom_text(aes(y = exp(est-1.96*se),
+                label = n),
+            vjust = 1.8,
+            size  = 3) +
+  
+  # Plot the CIs
+  geom_linerange(aes(ymin = exp(est-1.96*se),
+                     ymax = exp(est+1.96*se)),
+                 colour = "black",
+                 lwd = 0.5) +
+  
+  # Set the scale for the size of boxes
+  scale_radius(guide  = "none",
+               limits = c(0, NA_real_),
+               range  = c(0, 3)) +
+  
+  # Use identity for aesthetic scales
+  scale_shape_identity() +
+  scale_colour_identity() +
+  scale_fill_identity() +
+  
+  # Set the y-axis scale
+  scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
+  # Set the x-axis scale
+  scale_x_discrete(labels = c("Excellent", "Good", "Fair", "Poor")) +
+  
+  # Add titles
+  xlab("Self-rated health") +
+  ylab("Hazard ratio (95% CI)") +
+  ggtitle("Stroke") +
+
+  # Plot n events text and HRs per 1SD increase in FI
+  geom_text(aes(y = 1.99,
+                x = 2.5,
+                label = "(54,193 cases)"),
+            size  = 3) +
+  geom_text(aes(y = 1.75,
+                x = 2.5,
+                label = "HR (95%CI): 1.07 (1.06-1.08)\nper 1SD increase"),
+            size  = 3.5)
+  
+  # Plot like a CKB plot
+  plot_stroke = ckbplotr::plot_like_ckb(plot           = plot,
+                                       xlims          = c(1, 4),
+                                       ylims          = c(0.85, 2),
+                                       gap            = c(0.05, 0.025),
+                                       ext            = c(0.025, 0.025),
+                                       ratio          = 1.5,
+                                       base_size      = 11,
+                                       base_line_size = 0.5)
+ 
+```
+
+Combine and save plot
+```{r, fig.width=10, fig.height=10}
+p = cowplot::plot_grid(plot_stroke, plot_ihd,
+                           ncol=2, nrow=1, align = "hv")
+
+title = ggdraw() + draw_label("Figure 1. Association between baseline self-rated health, stroke, and IHD", fontface='bold')
+
+plot1 = plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1)) # rel_heights values control title margins
+plot1
+
+cowplot::save_plot("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs//HRplots_SRH_IHDStroke_fulladj.png", plot1, base_height = 6, base_aspect_ratio = 1.5)
+```
