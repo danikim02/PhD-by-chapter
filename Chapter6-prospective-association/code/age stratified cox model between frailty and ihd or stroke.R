@@ -3,7 +3,7 @@
 ############################################################################################
 
 # Required libraries
-
+library(broom)      # for tidy() function
 library(ckbplotr)
 library(cowplot)
 library(data.table)
@@ -74,8 +74,8 @@ run_age_at_risk_cox_model_exposure = function(dataset, exposure_cat, exposure_co
     left_join(select(mydata, csid, dob_anon, study_date, !!x, !!y, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
     select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, !!x, !!y, is_female)
 
-  formula1 = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", exposure_cat," + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + poor_diet + met"))
-  formula2 = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", exposure_cont," + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_adiposity + poor_diet + met"))
+  formula1 = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", exposure_cat," + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg"))
+  formula2 = as.formula(paste("Surv(time_in, time_out, endpoint) ~ ", exposure_cont," + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg"))
   
   # Expand data by age-at-risk
   dataset_long = expand_age_at_risk(df = dataset,
@@ -84,7 +84,7 @@ run_age_at_risk_cox_model_exposure = function(dataset, exposure_cat, exposure_co
   
   # Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
   to_merge = mydata %>% 
-    select(csid, !!x, !!y, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, poor_adiposity, poor_diet)
+    select(csid, !!x, !!y, is_female, region_code, household_income, marital_status, occupation, highest_education, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, poor_diet, fat_body_mass_kg)
   
   dataset_long = left_join(dataset_long, to_merge, by = "csid")
   
