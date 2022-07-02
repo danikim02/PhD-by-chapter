@@ -94,6 +94,40 @@ table5_sex = tableone::CreateTableOne(vars = myvars, strata = c("fu_resurvey1", 
 table5_tot = print(table5_tot)
 table5_sex = print(table5_sex)
 ```
+## Baseline characteristics by frailty status
+
+### Open baseline frailty status
+
+```{r}
+frailty = readRDS("J:/R projects/PhD-by-chapter/data/processed_data/data_wide_fi_no_cv.rds")
+mydata = mydata %>% left_join(select(frailty, csid, b_fi.frail), by = "csid")
+```
+
+### Demographics
+
+```{r}
+myvars = c("age_at_study_date", "age_group", "is_female", 
+          #"region_is_urban", "marital_status_group", "highest_education", "household_income", "occupation", 
+          "smoking_group", "alcohol_category"#,
+          #"daily_fresh_fruit", "daily_fresh_veg", "daily_meat",
+          #"met", "self_rated_health",
+          #"asthma_diag", "cancer_diag", "chd_diag",  "cirrhosis_hep_diag", "copd_diag", "diabetes_diag", "emph_bronc_diag", "fracture_diag", "gall_diag",  "hypertension_diag", "kidney_dis_diag", "neurasthenia_diag", "peptic_ulcer_diag", "rheum_arthritis_diag", "rheum_heart_dis_diag", "stroke_or_tia_diag", "tb_diag"
+          )
+
+table_tot_byfrail = tableone::CreateTableOne(vars = myvars, strata = "b_fi.frail", data = mydata)
+table_tot_byfrail = print(table_tot_byfrail, nonnormal = c("met"))
+```
+
+### Physical measurements
+
+```{r}
+myvars = c("bmi_calc", "bmi_group", "waist_hip_ratio", "whr_group", "fat_percent", "fat_body_mass_kg", "lean_body_mass_kg", 
+           "sbp_mean", "sbp_group", "random_glucose", "random_glucose_group")
+
+table_tot_byfrail2 = tableone::CreateTableOne(vars = myvars, strata = "b_fi.frail", data = mydata)
+
+table_tot_byfrail2 = print(table_tot_byfrail2)
+```
 
 Save outputs
 
