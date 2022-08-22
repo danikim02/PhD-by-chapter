@@ -1,0 +1,190 @@
+---
+title: "Sensitivity analysis: reverse causation bias by exclusion of participants"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Sensitivity analysis to explore reverse causation bias by exclusion of participants
+
+In the associations between frailty and incident CVD, associations may be due to underlying illness or advanced stage of disease in those with CVD. To explore this, several sensitivity analyses will be performed:
+
+ - Excluding participants who died within 5 years of follow-up
+ - Excluding participants who reported unintentional weight loss at baseline
+ - Excluding participants who reported poor self-rated health at baseline
+ - Never smokers + did not die within 5 years of follow-up
+ 
+#### Required libraries
+
+```{r libraries}
+# required for age-at-risk stratified CoxPH model
+library(Epi)
+library(lubridate)
+library(survival)   
+library(tidyverse)
+```
+
+#### Open and process data
+
+```{r open-data}
+# Source script that creates working dataset that includes baseline frailty scores and CVD outcomes with key baseline covariates
+source("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/source/script to open and process dataset to analyse baseline frailty and outcomes.R")
+
+mydata = mydata %>% 
+  mutate(across(contains("_ind"), ~replace(., is.na(.), 0))) # replace missing values with zeros for dummy variables 
+
+mydata = mydata %>% 
+  mutate(across(c(contains("total_date"), contains("incidence_date"), contains("fatal_date"), date_of_death), ~replace(., is.na(.), censoring_date))) # if empty dates (i.e. no event), then replace empty values with censoring date
+```
+
+Apply exclusions and save as separate datasets
+
+```{r exclusions}
+# Unintentional weight loss variable at baseline
+covariates = data.table::fread(file = "J:/R projects/PhD-by-chapter/data/processed_data/data_wide_frailty_vars.csv", select = c("csid", "b_weight_loss"))
+
+mydata = mydata %>%  
+  left_join(covariates, by = "csid") %>% 
+  mutate(died_within_5y_study_date = if_else(died==1 & (date_of_death < study_date %m+% years(5)), 1, 0), # use lubridate to add 5 years
+         poor_self_rated_health = if_else(self_rated_health==3, 1, 0),
+         never_smoker = if_else(smoking_group==1, 1, 0))
+
+mylist = list()
+
+# Excluding participants who died within 5 years of follow-up
+mylist[[1]] = mydata %>% filter(died_within_5y_study_date == 0)
+
+# Excluding participants who reported unintentional weight loss at baseline
+mylist[[2]] = mydata %>% filter(b_weight_loss == 0)
+
+# Excluding participants who reported poor self-rated health at baseline
+mylist[[3]] = mydata %>% filter(poor_self_rated_health == 0)
+
+# Never smokers + did not die within 5 years of follow-up
+mylist[[4]] = mydata %>% filter(never_smoker == 1 & died_within_5y_study_date == 0)
+
+# name elements of the list
+names(mylist) = c("No death within first 5 years of follow-up",
+                  "No unintentional weight loss at baseline",
+                  "No poor self-rated health at baseline",
+                  "Never smokers and no death within first 5 years")
+
+sapply(mylist, nrow)
+```
+
+Process data
+
+```{r process-data}
+process_data = function(df){
+  
+  temp = df %>% 
+    select(csid, event_All_cause_mortality_ind = died, event_All_cause_mortality_date = date_of_death, event_Stroke_total_ind, event_Stroke_total_date, event_IHD_total_ind, event_IHD_total_date, event_Fatal_CVD_total_ind, event_Fatal_CVD_total_date)
+  
+  temp = pivot_longer(temp, cols = -1, names_pattern = "(.*)(ind|date)$", names_to = c("names", ".value"))
+    # names_pattern = ()()  means look for 2 parts; (.*) means first part should have zero or more characters; (ind|date)$ means the second part should end either as ind or date
+  
+  temp$names = as.factor(temp$names)
+  
+  mylist = split(temp, f = temp$names)
+                 
+  return(mylist)
+}
+
+mylistlist = lapply(mylist, prcoess_data)
+```
+
+
+### Run age-at-risk Cox PH models
+
+
+```{r create-function-age-at-risk}
+source("J:/R projects/PhD-by-chapter/source codes/ckb resources/expand_age_at_risk.R")
+
+run_age_at_risk_cox_model = function(dataset, fitype){
+  
+  # Save number of outcomes
+  n_outcome = table(dataset$ind)[["1"]]
+  
+  # Merge dob_anon, study_date and rename variables
+  dataset = dataset %>% 
+    left_join(select(mydata, csid, dob_anon, study_date, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
+    select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, is_female)
+  
+  formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + fat_body_mass_kg + poor_diet + met"))
+  
+  # Expand data by age-at-risk
+  dataset_long = expand_age_at_risk(df = dataset,
+                                    ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+  #head(dataset_long)
+  
+  # Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+  to_merge = mydata %>% 
+    select(csid, {{fitype}}, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, fat_body_mass_kg, poor_diet) %>% 
+    mutate(fi_transformed = scale({{fitype}})) # transform FI
+  
+  dataset_long = left_join(dataset_long, to_merge, by = "csid")
+  
+  # Cox proportional hazards model
+  fit = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
+  #summary(fit)
+
+  # Compute onfidence intervals
+  results = fit %>% 
+    tidy(conf.int = TRUE, exponentiate = TRUE) %>% 
+    select(term, estimate, starts_with("conf"))
+  
+  results = results[1, ] # save results for frailty
+
+  results$n = n_outcome # add number of outcomes 
+  
+  return(results)
+  
+}  
+```
+
+
+Run function on each outcome
+
+```{r run-age-at-risk-analysis, message=FALSE, error=FALSE}
+hrlist_mfi1sd_sty_nodeath = lapply(mylistlist[[1]], run_age_at_risk_cox_model, fitype = fi.score_no_cv)
+hrlist_mfi1sd_sty_noweightloss = lapply(mylistlist[[2]], run_age_at_risk_cox_model, fitype = fi.score_no_cv)
+hrlist_mfi1sd_sty_nopoorsrh = lapply(mylistlist[[3]], run_age_at_risk_cox_model, fitype = fi.score_no_cv)
+hrlist_mfi1sd_sty_neversmokernodeath = lapply(mylistlist[[4]], run_age_at_risk_cox_model, fitype = fi.score_no_cv)
+
+hrlist_mfi3sd_sty_nodeath = lapply(mylistlist[[1]], run_age_at_risk_cox_model, fitype = fi.score_no_21)
+hrlist_mfi3sd_sty_noweightloss = lapply(mylistlist[[2]], run_age_at_risk_cox_model, fitype = fi.score_no_21)
+hrlist_mfi3sd_sty_nopoorsrh = lapply(mylistlist[[3]], run_age_at_risk_cox_model, fitype = fi.score_no_21)
+hrlist_mfi3sd_sty_neversmokernodeath = lapply(mylistlist[[4]], run_age_at_risk_cox_model, fitype = fi.score_no_21)
+```
+
+Rename and reorder list
+
+```{r rename-and-reorder-list}
+# Function to rename and reorder list
+rename_reorder_list = function(mylist){
+  
+  # Rename list using stringr
+  names(mylist) = stringr::word(stringr::str_replace_all(names(mylist), "_", " ") # replace all underscore with space
+                                  , start=2, end=-2) # extract string from 2 word until last second word
+  
+  # Reorder list elements
+  mylist = mylist[c("Stroke total", "IHD total", "Fatal CVD total", "All cause mortality")]
+}
+
+hrlist = list(hrlist_mfi1sd_sty_nodeath, hrlist_mfi1sd_sty_noweightloss, hrlist_mfi1sd_sty_nopoorsrh, hrlist_mfi1sd_sty_neversmokernodeath,
+              hrlist_mfi3sd_sty_nodeath, hrlist_mfi3sd_sty_noweightloss, hrlist_mfi3sd_sty_nopoorsrh, hrlist_mfi3sd_sty_neversmokernodeath)
+
+names(hrlist) = c("HRs mFI-1 1SD and outcomes (no deaths within 5 years)", "HRs mFI-1 1SD and outcomes (no unintentional weight loss)", "HRs mFI-1 1SD and outcomes (no poor self-rated health)", "HRs mFI1 1SD and outcomes (never smokers and no deaths)", 
+                  "HRs mFI-3 1SD and outcomes (no deaths within 5 years)", "HRs mFI-3 1SD and outcomes (no unintentional weight loss)", "HRs mFI-3 1SD and outcomes (no poor self-rated health)", "HRs mFI-3 1SD and outcomes (never smokers and no deaths)")
+
+hrlist = lapply(hrlist, rename_reorder_list)
+```
+
+Save output for plotting later
+
+```{r save-output}
+saveRDS(hrlist, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI and outcomes (sensitivity exclusions).rds"))
+```
