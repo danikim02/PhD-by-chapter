@@ -1,0 +1,222 @@
+---
+title: "Sensitivity analysis results"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+
+```{r}
+library(data.table)
+```
+
+## Sensitivity analysis 
+
+### Association between frailty and outcomes by length of follow-up
+
+Open saved data
+
+```{r}
+hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI and outcomes (sensitivity years of follow-up).rds")
+```
+
+Each element of list contains:
+
+```{r}
+names(hrlist)
+```
+Each element contains HRs for frailty an the following outcomes:
+
+```{r}
+names(hrlist[[1]])
+```
+Each result data looks like:
+
+```{r}
+hrlist[[1]][[1]]
+```
+
+Process data
+
+```{r}
+mfi1_stroke = data.table::rbindlist(list("1" = hrlist[[1]][[1]], 
+                                         "3" = hrlist[[2]][[1]],
+                                         "5" = hrlist[[3]][[1]], 
+                                         "8" = hrlist[[4]][[1]]), idcol = "followup")
+mfi1_ihd = data.table::rbindlist(list("1" = hrlist[[1]][[2]], 
+                                         "3" = hrlist[[2]][[2]],
+                                         "5" = hrlist[[3]][[2]], 
+                                         "8" = hrlist[[4]][[2]]), idcol = "followup")
+mfi1_cvd = data.table::rbindlist(list("1" = hrlist[[1]][[3]], 
+                                         "3" = hrlist[[2]][[3]],
+                                         "5" = hrlist[[3]][[3]], 
+                                         "8" = hrlist[[4]][[3]]), idcol = "followup")
+mfi1_death = data.table::rbindlist(list("1" = hrlist[[1]][[4]], 
+                                         "3" = hrlist[[2]][[4]],
+                                         "5" = hrlist[[3]][[4]], 
+                                         "8" = hrlist[[4]][[4]]), idcol = "followup")
+mfi3_stroke = data.table::rbindlist(list("1" = hrlist[[5]][[1]], 
+                                         "3" = hrlist[[6]][[1]],
+                                         "5" = hrlist[[7]][[1]], 
+                                         "8" = hrlist[[8]][[1]]), idcol = "followup")
+mfi3_ihd = data.table::rbindlist(list("1" = hrlist[[5]][[2]], 
+                                         "3" = hrlist[[6]][[2]],
+                                         "5" = hrlist[[7]][[2]], 
+                                         "8" = hrlist[[8]][[2]]), idcol = "followup")
+mfi3_cvd = data.table::rbindlist(list("1" = hrlist[[5]][[3]], 
+                                         "3" = hrlist[[6]][[3]],
+                                         "5" = hrlist[[7]][[3]], 
+                                         "8" = hrlist[[8]][[3]]), idcol = "followup")
+mfi3_death = data.table::rbindlist(list("1" = hrlist[[5]][[4]], 
+                                         "3" = hrlist[[6]][[4]],
+                                         "5" = hrlist[[7]][[4]], 
+                                         "8" = hrlist[[8]][[4]]), idcol = "followup")
+process_data = function(df){
+  df = df %>% 
+   mutate(hr = format(round(estimate, 2), nsmall=2),
+          lq = format(round(conf.low, 2), nsmall=2),
+          uq = format(round(conf.high, 2), nsmall=2)) %>% 
+   mutate(hrs = paste0(hr, " (", lq, "-", uq, ")")) %>% 
+   select(followup, n, hrs)
+
+  return(df)
+}
+
+mylist_data = list(mfi1_stroke, mfi1_ihd, mfi1_cvd, mfi1_death,
+                   mfi3_stroke, mfi3_ihd, mfi3_cvd, mfi3_death)
+
+processed_data = lapply(mylist_data, process_data)
+```
+
+Combine and save data
+
+```{r}
+names(processed_data[[1]]) = c("followup", "n.stroke", "hrs.stroke")
+names(processed_data[[5]]) = c("followup", "n.stroke", "hrs.stroke")
+names(processed_data[[2]]) = c("followup", "n.ihd", "hrs.ihd")
+names(processed_data[[6]]) = c("followup", "n.ihd", "hrs.ihd")
+names(processed_data[[3]]) = c("followup", "n.cvd", "hrs.cvd")
+names(processed_data[[7]]) = c("followup", "n.cvd", "hrs.cvd")
+names(processed_data[[4]]) = c("followup", "n.death", "hrs.death")
+names(processed_data[[8]]) = c("followup", "n.death", "hrs.death")
+
+temp1 = purrr::reduce(list(processed_data[[1]], processed_data[[2]], processed_data[[3]], processed_data[[4]]), dplyr::left_join, by = "followup")
+temp2 = purrr::reduce(list(processed_data[[5]], processed_data[[6]], processed_data[[7]], processed_data[[8]]), dplyr::left_join, by = "followup")
+
+output = bind_rows(list("mFI-1" = temp1, "mFI-3" = temp2), .id = "fi")
+
+output
+```
+
+Save output
+
+```{r}
+write.csv(output, file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/sensitivity/associations-frailty-outcomes-by-followup-length.csv")
+```
+
+### Association between frailty and outcomes by exclusions
+
+Open saved data
+
+```{r}
+hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI and outcomes (sensitivity exclusions).rds")
+```
+
+Each element of list contains:
+
+```{r}
+names(hrlist)
+```
+Each element contains HRs for frailty an the following outcomes:
+
+```{r}
+names(hrlist[[1]])
+```
+Each result data looks like:
+
+```{r}
+hrlist[[1]][[1]]
+```
+
+Process data
+
+```{r}
+mfi1_stroke = data.table::rbindlist(list("neversmokers" = hrlist[[4]][[1]], 
+                                         "noweightloss" = hrlist[[2]][[1]],
+                                         "nopoorselfra" = hrlist[[3]][[1]], 
+                                         "noearlydeath" = hrlist[[1]][[1]]), idcol = "exclusion")
+mfi1_ihd =    data.table::rbindlist(list("neversmokers" = hrlist[[4]][[2]], 
+                                         "noweightloss" = hrlist[[2]][[2]],
+                                         "nopoorselfra" = hrlist[[3]][[2]], 
+                                         "noearlydeath" = hrlist[[1]][[2]]), idcol = "exclusion")
+mfi1_cvd =    data.table::rbindlist(list("neversmokers" = hrlist[[4]][[3]], 
+                                         "noweightloss" = hrlist[[2]][[3]],
+                                         "nopoorselfra" = hrlist[[3]][[3]], 
+                                         "noearlydeath" = hrlist[[1]][[3]]), idcol = "exclusion")
+mfi1_death =  data.table::rbindlist(list("neversmokers" = hrlist[[4]][[4]], 
+                                         "noweightloss" = hrlist[[2]][[4]],
+                                         "nopoorselfra" = hrlist[[3]][[4]], 
+                                         "noearlydeath" = hrlist[[1]][[4]]), idcol = "exclusion")
+mfi3_stroke = data.table::rbindlist(list("neversmokers" = hrlist[[8]][[1]], 
+                                         "noweightloss" = hrlist[[6]][[1]],
+                                         "nopoorselfra" = hrlist[[7]][[1]], 
+                                         "noearlydeath" = hrlist[[5]][[1]]), idcol = "exclusion")
+mfi3_ihd =    data.table::rbindlist(list("neversmokers" = hrlist[[8]][[2]], 
+                                         "noweightloss" = hrlist[[6]][[2]],
+                                         "nopoorselfra" = hrlist[[7]][[2]], 
+                                         "noearlydeath" = hrlist[[5]][[2]]), idcol = "exclusion")
+mfi3_cvd =    data.table::rbindlist(list("neversmokers" = hrlist[[8]][[3]], 
+                                         "noweightloss" = hrlist[[6]][[3]],
+                                         "nopoorselfra" = hrlist[[7]][[3]], 
+                                         "noearlydeath" = hrlist[[5]][[3]]), idcol = "exclusion")
+mfi3_death =  data.table::rbindlist(list("neversmokers" = hrlist[[8]][[4]], 
+                                         "noweightloss" = hrlist[[6]][[4]],
+                                         "nopoorselfra" = hrlist[[7]][[4]], 
+                                         "noearlydeath" = hrlist[[5]][[4]]), idcol = "exclusion")
+
+process_data = function(df){
+  df = df %>% 
+   mutate(hr = format(round(estimate, 2), nsmall=2),
+          lq = format(round(conf.low, 2), nsmall=2),
+          uq = format(round(conf.high, 2), nsmall=2)) %>% 
+   mutate(hrs = paste0(hr, " (", lq, "-", uq, ")")) %>% 
+   select(exclusion, n, hrs)
+
+  return(df)
+}
+
+mylist_data = list(mfi1_stroke, mfi1_ihd, mfi1_cvd, mfi1_death,
+                   mfi3_stroke, mfi3_ihd, mfi3_cvd, mfi3_death)
+
+processed_data = lapply(mylist_data, process_data)
+```
+
+Combine and save data
+
+```{r}
+names(processed_data[[1]]) = c("exclusion", "n.stroke", "hrs.stroke")
+names(processed_data[[5]]) = c("exclusion", "n.stroke", "hrs.stroke")
+names(processed_data[[2]]) = c("exclusion", "n.ihd", "hrs.ihd")
+names(processed_data[[6]]) = c("exclusion", "n.ihd", "hrs.ihd")
+names(processed_data[[3]]) = c("exclusion", "n.cvd", "hrs.cvd")
+names(processed_data[[7]]) = c("exclusion", "n.cvd", "hrs.cvd")
+names(processed_data[[4]]) = c("exclusion", "n.death", "hrs.death")
+names(processed_data[[8]]) = c("exclusion", "n.death", "hrs.death")
+
+temp1 = purrr::reduce(list(processed_data[[1]], processed_data[[2]], processed_data[[3]], processed_data[[4]]), dplyr::left_join, by = "exclusion")
+temp2 = purrr::reduce(list(processed_data[[5]], processed_data[[6]], processed_data[[7]], processed_data[[8]]), dplyr::left_join, by = "exclusion")
+
+output = bind_rows(list("mFI-1" = temp1, "mFI-3" = temp2), .id = "fi")
+
+output
+```
+
+Save output
+
+```{r}
+write.csv(output, file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/sensitivity/associations-frailty-outcomes-by-exclusions.csv")
+```
