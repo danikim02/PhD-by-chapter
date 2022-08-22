@@ -28,7 +28,7 @@ for (analysis in mylist){
 
 library(rmarkdown)
 
-mylist = list("original") 
+mylist = list("original", "mFI-1", "mFI-3") 
 
 for (fi_type in mylist){
   
@@ -44,12 +44,55 @@ for (fi_type in mylist){
 
 library(rmarkdown)
 
-mylist = list("modified", "original") 
+mylist = list("Original FI", "mFI-1", "mFI-3") 
 
 for (fi_type in mylist){
   
   rmarkdown::render('J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/Plot age-at-risk stratified HRs.Rmd', # location of markdown to be run
                     output_file =  paste("Plot-age-at-risk-stratified-HRs-FI", fi_type, '_', Sys.Date(), ".html", sep=''), 
-                    output_dir = 'J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/') # location of output
+                    output_dir = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/")) # location of output
+  
+}
+
+########################################################################
+#### Script to run subgroup analysis for age-at-risk stratified HRs ####
+########################################################################
+
+library(rmarkdown)
+
+mylist = list("mFI-1", "mFI-3") #
+mylist2 = list("event_Stroke_total_", "event_IHD_total_", "event_Fatal_CVD_total_" , "event_All_cause_mortality_")
+
+for (fi_type in mylist){
+  
+  for (outcome in mylist2){
+    
+    rmarkdown::render('J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/subgroup analysis for cox models between frailty and outcomes.Rmd', # location of markdown to be run
+                    output_file =  paste("subgroup_analysis_", fi_type, "_", outcome, "_", Sys.Date(), ".html", sep=""), 
+                    output_dir = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/")) # location of output
+  
+  }
+  
+}
+
+
+########################################################################
+#### Script to plot subgroup analysis for age-at-risk stratified HRs ####
+########################################################################
+
+library(rmarkdown)
+
+mylist = list("mFI-3", "mFI-1")
+mylist2 = list("CVD mortality" , "All-cause mortality", "IHD", "Stroke")
+
+for (fi_type in mylist){
+  
+  for (outcome in mylist2){
+    
+    rmarkdown::render('J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/Plot subgroup age-at-risk stratified HRs.Rmd', # location of markdown to be run
+                      output_file =  paste("subgroup_analysis_", fi_type, "_", outcome, "_", Sys.Date(), ".html", sep=""), 
+                      output_dir = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/subgroup/")) # location of output
+    
+  }
   
 }
