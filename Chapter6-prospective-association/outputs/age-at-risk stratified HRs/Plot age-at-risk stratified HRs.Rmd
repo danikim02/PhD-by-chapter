@@ -4,6 +4,10 @@ output: html_document
 date: "`r Sys.Date()`"
 ---
 
+# Age-at-risk stratified HRs between baseline frailty and outcomes
+
+Cox proportional hazards models were adjusted for age-at-risk (5 year groups), sex (when appropriate), region, income level, marital status, occupation, education level, hypertension diagnosis, diabetes diagnosis, alcohol category, smoking category, fat mass (kg), poor diet, and physical activity.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -13,6 +17,7 @@ Libraries
 ```{r}
 library(ckbplotr)
 library(cowplot)
+library(stringr)
 library(tidyverse)
 ```
 
@@ -21,19 +26,32 @@ library(tidyverse)
 HRs between baseline frailty and outcomes were stored in an RDS object (nested list structure)
 
 ```{r}
-if (fi_type == "original"){
+if (fi_type == "Original FI"){
   
   hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (original) and outcomes.rds")
   
-  ylimit = c(0.85, 3.5)
-  ybreak = c(1, 1.5, 2.2, 3)
+  ylimit = c(0.85, 4)
+  ybreak = c(1, 1.5, 2.5, 4)
+  case_y_pos = 3.8
+  hr_y_pos = 3.2
   
-} else if (fi_type == "modified"){
+} else if (fi_type == "mFI-1"){
  
-  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI and outcomes.rds")
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (mFI-1) and outcomes.rds")
+  
+  ylimit = c(0.85, 2.5)
+  ybreak = c(1, 1.5, 2.5)
+  case_y_pos = 2.4
+  hr_y_pos = 2.1
+  
+} else if (fi_type == "mFI-3"){
+ 
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (mFI-3) and outcomes.rds")
   
   ylimit = c(0.85, 2)
   ybreak = c(1, 1.5, 2)
+  case_y_pos = 1.95
+  hr_y_pos = 1.75
   
 } else {
    
@@ -51,63 +69,173 @@ Are HRs between baseline frailty and the following 23 outcomes:
 ```{r}
 names(hrlist[[1]])
 ```
-## Age-at-risk stratified HRs between baseline frailty and outcomes
+Rename outcomes 
 
-Cox proportional hazards models were adjusted for age-at-risk (5 year groups), sex (when appropriate), region, income, marital status, occupation, education level, hypertension diagnosis, diabetes diagnosis, alcohol category, smoking category, poor adiposity, poor diet, and physical activity.
+```{r}
+# Save ordering of outcome
+outcome_name = names(hrlist[[1]])
 
-### HRs for total participants 
+outcome_name = outcome_name %>% 
+  str_replace(., "fatal", "(fatal)") %>% 
+  str_replace(., "incidence", "(non-fatal)") %>% 
+  str_replace(., "Fatal CVD (total)", "CVD mortality") %>%   
+  str_replace(., "total", "(any)") %>% 
+  str_replace(., "All cause mortality", "All-cause mortality")
 
-Baseline FI quintiles and outcomes
+outcome_name
+
+# Rename list elements
+for (i in 1:length(hrlist)){
+  names(hrlist[[i]]) = outcome_name
+}
+```
+
+## Create table of HRs with number of events
+
+By levels of frailty (non-frail, pre-frail, and frail) and per 1SD increase
+
+```{r}
+# Frailty levels
+func_get_hrs = function(df){ # create function to exponentiate HR estimates 
+  
+  df = df %>% 
+   mutate(hr = format(round(exp(est), 2), nsmall=2),
+          lq = format(round(exp(est-1.96*se), 2), nsmall=2),
+          uq = format(round(exp(est+1.96*se), 2), nsmall=2)) %>% 
+   mutate(hrs = paste0(hr, " (", lq, "-", uq, ")")) %>% 
+   select(rf, n, hrs)
+  
+  return(df)
+  
+} 
+
+hrs_filevel_total = lapply(hrlist[["HRs FI level and outcomes overall"]], func_get_hrs) # apply function to each element of list
+
+hrs_filevel_total = data.table::rbindlist(hrs_filevel_total, idcol = "outcome") # combine data from each element of list
+
+# Frailty per 1SD
+
+hrs_fi1sd_total = data.table::rbindlist(hrlist[["HRs FI 1SD and outcomes overall"]], idcol = "outcome") %>% 
+   mutate(hr = format(round(estimate, 2), nsmall=2),
+          lq = format(round(conf.low, 2), nsmall=2),
+          uq = format(round(conf.high, 2), nsmall=2)) %>% 
+  mutate(hrs = paste0(hr, " (", lq, "-", uq, ")")) %>% 
+  select(outcome, rf=term, n, hrs)
+
+# Save ordering of outcome
+outcome_order = pull(hrs_fi1sd_total, outcome)
+
+# Combine data
+hrs_total = bind_rows(hrs_filevel_total, hrs_fi1sd_total) %>% 
+  mutate(outcome = factor(outcome, levels = outcome_order)) %>% 
+  arrange(outcome)
+
+hrs_total
+
+write.csv(hrs_total, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/HRs_", fi_type, "_outcomes.csv"))
+```
+
+## Create figures 
+
+### Baseline FI quintiles and outcomes
 
 ```{r, fig.width=10, fig.height=10}
-plots = list()
+plots1 = list()
 
-for (i in 1:length(hrlist[[1]])){
+# Create plots for each outcome
+
+for (i in 1:length(hrlist[[1]])){ # 1 refers to list element with "HRs FI quintile and outcomes overall"
+  
+  # Get title for plot
   
   title = names(hrlist[[1]][i]) 
   
-  plots[[i]] = ckbplotr::make_shape_plot(hrlist[[1]][[i]],
+  # Create plot
+  
+  plots1[[i]] = ckbplotr::make_shape_plot(hrlist[[1]][[i]],
                             col.x          = "rf",
                             col.estimate   = "est",
                             col.stderr     = "se",
                             col.n          = "n",
                             exponentiate   = TRUE, 
-                            xlims          = c(1, 5),
+                            xlims          = c(0.8, 5),
                             ylims          = ylimit,
                             ybreaks        = ybreak,
-                            xlab           = "",
+                            xlab           = paste0(fi_type, " quintile"),
                             ylab           = "Hazard ratio (95% CI)",
                             scalepoints    = TRUE,
                             title          = title,
                             printplot      = FALSE, 
-                            showcode = FALSE)
-  
+                            showcode = FALSE)$plot
+
 }
 
-plot1a = cowplot::plot_grid(plots[[1]]$plot, plots[[2]]$plot, plots[[3]]$plot, 
-                            plots[[4]]$plot, plots[[5]]$plot, plots[[6]]$plot,
-                            plots[[7]]$plot, plots[[8]]$plot, plots[[9]]$plot,
-                            ncol=3, nrow=3, align = "hv")
+# Add number of events and HRs per 1SD increase in FI for each outcome
 
-plot1b = cowplot::plot_grid(plots[[10]]$plot, plots[[11]]$plot, plots[[12]]$plot, 
-                            plots[[13]]$plot, plots[[14]]$plot, plots[[15]]$plot,
-                            plots[[22]]$plot, plots[[23]]$plot,
-                            ncol=3, nrow=3, align = "hv")
+add_text_to_plot = function(i){
+  
+  # Get number of events and HRs for 1SD increase in FI
+  
+  tot = scales::label_comma()(
+    sum(hrlist[[1]][[i]]$n, na.rm =TRUE)
+  )
 
-plot1c = cowplot::plot_grid(plots[[16]]$plot, plots[[17]]$plot, plots[[18]]$plot, 
-                            plots[[19]]$plot, plots[[20]]$plot, plots[[21]]$plot,
-                            ncol=3, nrow=3, align = "hv")
+  hrs = hrlist[["HRs FI 1SD and outcomes overall"]][[i]] %>% # 7 refers to list element with "HRs FI 1SD and outcomes overall"
+    mutate(hr = format(round(estimate, 2), nsmall=2),
+          lq = format(round(conf.low, 2), nsmall=2),
+          uq = format(round(conf.high, 2), nsmall=2)) %>% 
+    mutate(hrs = paste0(hr, " (", lq, "-", uq, ")")) %>% 
+    pull(hrs)
+  
+  # Create plot
+  
+  output = plots1[[i]] +
+      # Plot n events text and HRs per 1SD increase in FI
+      geom_text(aes(y = case_y_pos,
+                    x = 3,
+                    label = paste0("(", tot, " cases)")),
+                size  = 3.5) +
+      geom_text(aes(y = hr_y_pos,
+                    x = 3,
+                    label = paste0("HR (95%CI): ", hrs, "\nper 1SD increase")),
+                size  = 3.5)
+  
+  return(output)
 
-plot1a
-plot1b
-plot1c
+}
 
-cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, " FI/HRplots_FI", fi_type, "_quintile_CVD1_fulladj.png"), plot1a, base_height = 8, base_aspect_ratio = 1)
-cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, " FI/HRplots_FI", fi_type, "_quintile_CVD2_fulladj.png"), plot1b, base_height = 8, base_aspect_ratio = 1)
-cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, " FI/HRplots_FI", fi_type, "_quintile_CVD3_fulladj.png"), plot1c, base_height = 8, base_aspect_ratio = 1)
+plots = list()
+
+plots = lapply(c(1:23), add_text_to_plot)
+
+plot_stroke = cowplot::plot_grid(plots[[1]], plots[[2]], plots[[3]], 
+                                 plots[[4]], plots[[5]], plots[[6]],
+                                 plots[[7]], plots[[8]], plots[[9]],
+                                 ncol=3, nrow=3, align = "hv", scale = 0.9)
+
+plot_ihd = cowplot::plot_grid(plots[[10]], plots[[11]], plots[[12]], 
+                              plots[[13]], plots[[14]], plots[[15]],
+                              plots[[19]], plots[[20]], plots[[21]],
+                              ncol=3, nrow=3, align = "hv", scale = 0.9)
+
+plot_total = cowplot::plot_grid(plots[[22]], plots[[23]],
+                            ncol=2, nrow=1, align = "hv", scale = 0.9)
+
+plot_stroke
+plot_ihd
+plot_total
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/HRplots_", fi_type, "_quintile_stroke.png"), plot_stroke, base_height = 13, base_asp = 0.8) # base_asp = width/height
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/HRplots_", fi_type, "_quintile_ihd.png"), plot_ihd, base_height = 13, base_asp = 0.8) # base_asp = width/height
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, "/HRplots_", fi_type, "_quintile_mortality.png"), plot_total, base_height = 6, base_asp = 1.5) # base_asp = width/height
 ```
 
-Baseline FI levels and outcomes
+
+```{r}
+knitr::knit_exit()
+```
+
+### Baseline FI levels and outcomes
 
 ```{r, fig.width=10, fig.height=10}
 plots = list()
@@ -284,7 +412,7 @@ test = ckbplotr::plot_like_ckb(plot    = plot,
 test
 ```
 
-Baseline FI quintiles and outcomes by sex
+#### Baseline FI quintiles and outcomes by sex
 
 ```{r, fig.width=12, fig.height=10}
 plots = list()
@@ -382,7 +510,7 @@ cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-ass
 cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/", fi_type, " FI/HRplots_FI", fi_type, "_quintile_CVD3_fulladj_sex.png"), plot3c, base_height = 12, base_aspect_ratio = 1)
 ```
 
-Baseline FI levels and outcomes by sex
+#### Baseline FI levels and outcomes by sex
 
 ```{r, fig.width=12, fig.height=10}
 plots = list()
