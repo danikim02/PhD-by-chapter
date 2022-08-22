@@ -1,0 +1,371 @@
+---
+title: "CoxPH subgroup models"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Required libraries
+
+```{r library}
+library(broom)      # for tidy() to get clean HRs and confidence intervals from model fit
+library(cowplot)
+library(data.table)
+library(Epi)        # for float(), which compute floating absolute risks using the method by Easton et al.
+library(gridExtra)
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(survival)   # for Surv(), cox regression
+library(tidyverse)
+```
+
+## Open and process data
+
+Run external script to open and process data
+
+```{r open-data}
+# Source script that creates working dataset that includes baseline frailty scores and CVD outcomes with key baseline covariates
+source("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/source/script to open and process dataset to analyse baseline frailty and outcomes.R")
+
+# open pretty covariates for later
+covariates = readRDS("J:/R projects/PhD-by-chapter/rds objects/covariates_pretty_levels_for_everyone.rds")
+```
+
+Data structure
+
+```{r data-structure}
+str(mydata)
+```
+
+
+Number of participants included:
+
+  - FI analysis: `r nrow(mydata)`
+
+Further process data for age-at-risk analysis to have following variables:
+
+  - csid
+  - dob_anon
+  - study_date
+  - endpoint - binary variable indicating the endpoint (1/0)
+  - endpoint_date - date of endpoint event or censoring
+  - frailty quintile group
+  - outcome_type - indicate outcome type, e.g. stroke, MI, etc.
+
+```{r data-process, message=FALSE, warning=FALSE}
+mydata = mydata %>% 
+  mutate_at(vars(contains("_ind")), ~replace(., is.na(.), 0)) # replace missing values with zeros for dummy variables 
+
+mydata = mydata %>% 
+  mutate_at(vars(contains("total_date"), contains("incidence_date"), contains("fatal_date"), date_of_death), ~replace(., is.na(.), censoring_date)) # if empty dates (i.e. no event), then replace empty values with censoring date
+
+kable(head(mydata)) %>% kableExtra::kable_styling()
+```
+
+Transform FI variable
+
+```{r fi-process}
+if (fi_type == "mFI-1"){
+  
+  mydata$fi_transformed = (mydata$fi.score_no_cv - mean(mydata$fi.score_no_cv))/sd(mydata$fi.score_no_cv) # per 1 SD
+  
+} else if (fi_type == "mFI-3"){
+  
+  mydata$fi_transformed = (mydata$fi.score_no_21 - mean(mydata$fi.score_no_21))/sd(mydata$fi.score_no_21) # per 1 SD
+  
+} else {}
+
+#mydata$fi_deficit = mydata$fi.score_no_cv/(1/23) # per 1 deficit increment
+#mydata$fi_0.1 = mydata$fi.score_no_cv/0.1 # per 0.1 unit increment
+
+#hist(mydata$fi_transformed)
+#hist(mydata$fi.score_no_cv)
+```
+
+Make outcome data long
+
+```{r make-data-long}
+temp = mydata %>% 
+  select(csid, event_All_cause_mortality_ind = died, event_All_cause_mortality_date = date_of_death, contains("event_")) # rename death variables
+
+temp = pivot_longer(temp, cols = -1, names_pattern = "(.*)(ind|date)$", names_to = c("names", ".value"))
+  # names_pattern = ()()  means look for 2 parts; (.*) means first part should have zero or more characters; (ind|date)$ means the second part should end either as ind or date
+
+temp$names = as.factor(temp$names)
+```
+
+Split data on outcome and save as list
+
+```{r split-data}
+mylist = split(temp, f = temp$names)
+```
+
+## Analysis
+
+Select dataset with outcome
+
+```{r}
+dataset = mylist[[c(outcome)]]
+```
+
+Expand data for age-at-risk analysis
+
+```{r}
+# Expand data for age-at-risk analysis
+source("J:/R projects/PhD-by-chapter/source codes/ckb resources/expand_age_at_risk.R")
+
+# Merge dob_anon, study_date and rename variables
+dataset = dataset %>% 
+  left_join(select(mydata, csid, dob_anon, study_date), by = "csid") %>% # mydata contains frailty variable and other covariates
+  select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date)
+
+dataset_long = expand_age_at_risk(df = dataset,
+                                  ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+#head(dataset_long)
+
+# Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+to_merge = covariates %>% 
+  select(csid, is_female, age_at_study_date, age_group, region_is_urban, region_code, household_income, marital_status_group, occupation, highest_education, met, hypertension_diag, diabetes_diag, random_glucose_group, sbp_group, fat_body_mass_kg, alcohol_category, smoking_group, smoking_group_qty, poor_diet, sbp_mean, random_glucose) %>% 
+  mutate(age_group2 = factor(case_when(age_at_study_date < 40 ~ "30-39",
+                                       age_at_study_date < 50 ~ "40-49",
+                                       age_at_study_date < 60 ~ "50-59",
+                                       age_at_study_date < 70 ~ "60-69",
+                                       age_at_study_date < 75 ~ "70-74",
+                                       TRUE ~ "75-80"), levels = c("30-39", "40-49", "50-59", "60-69", "70-74", "75-80")),
+         highest_education_cat = factor(case_when(highest_education == "No formal school" ~ "No formal school",
+                                                  highest_education == "Primary School" ~ "Primary school",
+                                                  TRUE ~ "Middle school or higher"), levels = c("No formal school", "Primary school", "Middle school or higher")),
+         fat_body_mass_cat = factor(ntile(fat_body_mass_kg, 5), levels=c(1:5)),
+         sbp_cat = factor(ntile(sbp_mean, 5), levels=c(1:5)),
+         random_glucose_cat = factor(ntile(random_glucose, 5), levels=c(1:5))
+         )# recode variables
+  
+dataset_long = left_join(dataset_long, to_merge, by = "csid") %>% 
+  left_join(select(mydata, csid, fi_transformed), by = "csid")
+```
+
+```{r}
+testing = mydata %>% 
+  select(csid, fi.cat_full)
+
+```
+
+Run age-at-risk, sex, and region stratified, where appropriate, Cox proportional hazards models by subgroup
+
+```{r}
+# Sex
+models_sex = by(dataset_long, dataset_long$is_female, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Age group
+models_age = by(dataset_long, dataset_long$age_group, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Area
+models_region = by(dataset_long, dataset_long$region_is_urban, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Education level
+models_education = by(dataset_long, dataset_long$highest_education, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# BMI 
+models_fatmass = by(dataset_long, dataset_long$fat_body_mass_cat, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Alcohol
+models_alcohol = by(dataset_long, dataset_long$alcohol_category, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Smoking
+models_smoking = by(dataset_long, dataset_long$smoking_group, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Hypertension
+models_sbp = by(dataset_long, dataset_long$sbp_group, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+
+# Diabetes
+models_glucose = by(dataset_long, dataset_long$random_glucose_group, function(x) survival::coxph(Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + strata(is_female) + strata(region_code) + household_income + marital_status_group + occupation + highest_education + sbp_mean + random_glucose + alcohol_category + smoking_group + poor_diet + fat_body_mass_kg, data = x, ties = "breslow"))
+```
+
+Write function to extract data from each model
+
+```{r}
+# Create function to extract data
+extract_data = function(df, name, varlabel) {
+  
+  results = summary(df)$coefficients[1, c("coef", "se(coef)")]
+  
+  output = data.frame(
+    #variable = paste0(varlabel, "_", names(x)),
+    variable = paste0(varlabel, "_", name),
+    estimate = results[["coef"]],
+    stderr = results[["se(coef)"]],
+    n = df$nevent
+  )
+  
+  return(output)
+  
+}
+```
+
+Extract data for each subgroup analysis
+
+```{r}
+# Extract data for each of the subgroup and save as a list
+data_sex = mapply(extract_data, df = models_sex, name = names(models_sex), varlabel="sex", SIMPLIFY = FALSE)
+data_age = mapply(extract_data, df = models_age, name = names(models_age), varlabel="agegroup", SIMPLIFY = FALSE)
+data_region = mapply(extract_data, df = models_region, name = names(models_region), varlabel="region", SIMPLIFY = FALSE)
+data_education = mapply(extract_data, df = models_education, name = names(models_education), varlabel="education", SIMPLIFY = FALSE)
+data_fatmass = mapply(extract_data, df = models_fatmass, name = names(models_fatmass), varlabel="fatmass", SIMPLIFY = FALSE)
+data_alcohol = mapply(extract_data, df = models_alcohol, name = names(models_alcohol), varlabel="alcohol", SIMPLIFY = FALSE)
+data_smoking = mapply(extract_data, df = models_smoking, name = names(models_smoking), varlabel="smoking", SIMPLIFY = FALSE)
+data_sbp = mapply(extract_data, df = models_sbp, name = names(models_sbp), varlabel="sbp", SIMPLIFY = FALSE)
+data_glucose = mapply(extract_data, df = models_glucose, name = names(models_glucose), varlabel="glucose", SIMPLIFY = FALSE)
+```
+
+Carry out heterogeneity and trend tests
+
+```{r}
+# Carry out heterogeneity or trend test
+source("J:/R projects/PhD-by-chapter/source codes/ckb resources/trend_het.R")
+
+# Heterogeneity
+test_het_sex = heterogeneity(bind_rows(data_sex)$estimate, bind_rows(data_sex)$stderr)
+test_het_region = heterogeneity(bind_rows(data_region)$estimate, bind_rows(data_region)$stderr)
+test_het_alcohol = heterogeneity(bind_rows(data_alcohol)$estimate, bind_rows(data_alcohol)$stderr)
+test_het_smoking = heterogeneity(bind_rows(data_smoking)$estimate, bind_rows(data_smoking)$stderr)
+test_het_fatmass = heterogeneity(bind_rows(data_fatmass)$estimate, bind_rows(data_fatmass)$stderr)
+
+# Trend
+test_trend_age = trend(bind_rows(data_age)$estimate, bind_rows(data_age)$stderr)
+test_trend_fatmass = trend(bind_rows(data_fatmass)$estimate, bind_rows(data_fatmass)$stderr)
+test_trend_education = trend(bind_rows(data_education)$estimate, bind_rows(data_education)$stderr)
+test_trend_sbp = heterogeneity(bind_rows(data_sbp)$estimate, bind_rows(data_sbp)$stderr)
+test_trend_glucose = heterogeneity(bind_rows(data_glucose)$estimate, bind_rows(data_glucose)$stderr)
+```
+
+Combine output data into a clean dataset
+
+```{r}
+# Heterogeneity and trend tests
+test_het = bind_rows(list("sex" = test_het_sex,
+               "region" = test_het_region,
+               "alcohol" = test_het_alcohol,
+               "smoking" = test_het_smoking), .id = "variable")
+names(test_het) = c("variable", "het_stat", "het_p")
+
+test_trend = bind_rows(list("agegroup" = test_trend_age,
+               "fatmass" = test_trend_fatmass,
+               "education" = test_trend_education,
+               "sbp" = test_trend_sbp,
+               "glucose" = test_trend_glucose), .id = "variable")
+names(test_trend) = c("variable", "trend_stat", "trend_p")
+
+results_extra = full_join(test_het, test_trend, by = "variable") %>% 
+  mutate(het_p = format.pval(het_p, eps=.001, digits=1),
+         trend_p = format.pval(trend_p, eps=.001, digits=1))
+
+# HRs
+data_list = list(bind_rows(data_age),
+                 bind_rows(data_sex),
+                 bind_rows(data_region),
+                 bind_rows(data_education),
+                 bind_rows(data_fatmass),
+                 bind_rows(data_alcohol),
+                 bind_rows(data_smoking),
+                 bind_rows(data_sbp),
+                 bind_rows(data_glucose))
+
+final_results = bind_rows(data_list)
+
+final_results
+```
+
+```{r}
+# Create group labels
+final_results = final_results %>% 
+  separate(variable, c("subheading", "label"), sep = "_", remove = FALSE) 
+
+# Select the last group level of each subgroup to merge onto results_extra
+labels_to_merge = final_results %>%
+  group_by(subheading) %>% 
+  dplyr::mutate(id = row_number()) %>% 
+  filter(id == max(id)) %>% 
+  select(variable, subheading)
+
+results_extra = results_extra %>% 
+  select(subheading = variable, everything()) %>% 
+  full_join(labels_to_merge, by = "subheading") %>% # add labels
+  select(-subheading) %>% 
+  mutate_if(is.numeric, ~as.character(round(., 1))) %>% # round statistic to 1 dp
+  mutate_at(vars(het_p, trend_p), ~if_else(grepl("^0", .), paste0("=", .), .)) # add = to pvalue
+
+# Relabel headings 
+final_results = final_results %>% 
+  mutate(subheading = case_when(subheading == "agegroup" ~ "Age group",
+                                subheading == "sex" ~ "Sex",
+                                subheading == "region" ~ "Region",
+                                subheading == "education" ~ "Highest education",
+                                subheading == "fatmass" ~ "Fat mass quintile",
+                                subheading == "alcohol" ~ "Alcohol category",
+                                subheading == "smoking" ~ "Smoking category",
+                                subheading == "sbp" ~ "Systolic blood pressure",
+                                subheading == "glucose" ~ "Random glucose"))
+```
+
+Save data for plotting later
+
+```{r}
+save_results = list(final_results, results_extra)
+
+saveRDS(save_results, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/subgroup HRs ", fi_type, " and ", outcome, ".rds"))
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+```{r, fig.height=10, fig.width=8}
+row_labels = final_results[, c("subheading", "label", "variable")]
+row_labels$heading = "Subgroup"
+
+forestplot1 = ckbplotr::make_forest_plot(panels        = list(stroke_results[[1]]),
+                           col.key       = "variable",
+                           row.labels    = row_labels,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = "Subgroup",
+                           exponentiate  = TRUE,
+                           panel.names = c("Stroke"),
+                           ci.delim      = "-",
+                           xlim          = c(0.965, 1.21),
+                           xticks        = c(1, 1.1, 1.2),
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.heading.space = 1.5,
+                           addtext       = list(stroke_results[[2]]),
+                           right.space   = unit(35, "mm"))
+
+forestplot2 = ckbplotr::make_forest_plot(panels        = list(ihd_results[[1]]),
+                           col.key       = "variable",
+                           row.labels    = row_labels,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = "Subgroup",
+                           exponentiate  = TRUE,
+                           panel.names = c("IHD"),
+                           ci.delim      = "-",
+                           xlim          = c(1, 1.265),
+                           xticks        = c(1, 1.1, 1.2),
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.heading.space = 1.5,
+                           addtext       = list(ihd_results[[2]]),
+                           right.space   = unit(35, "mm")) 
+```
+
+
