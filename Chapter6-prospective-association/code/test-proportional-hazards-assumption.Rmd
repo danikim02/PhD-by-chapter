@@ -1,0 +1,211 @@
+---
+title: "Test cox model assumption"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Cox Model Assumptions
+
+ - Proportional hazards assumptions can be checked by *Schoenfeld residuals*
+ - Nonlinearity in relationship between the log hazard and the covariates can be checked by *Martingale residual*
+ - Influential observations or outliers can be checked by *deviance residual* (symmetric transformation of the Maringale residuals)
+ 
+#### Required libraries
+
+```{r libraries}
+library(gridExtra)
+library(survminer)
+
+# required for age-at-risk stratified CoxPH model
+library(Epi)
+library(lubridate)
+library(survival)   
+library(tidyverse)
+```
+
+#### Open and process data
+
+```{r open-data}
+# Source script that creates working dataset that includes baseline frailty scores and CVD outcomes with key baseline covariates
+source("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/code/source/script to open and process dataset to analyse baseline frailty and outcomes.R")
+
+mydata = mydata %>% 
+  mutate(across(contains("_ind"), ~replace(., is.na(.), 0))) # replace missing values with zeros for dummy variables 
+
+mydata = mydata %>% 
+  mutate(across(c(contains("total_date"), contains("incidence_date"), contains("fatal_date"), date_of_death), ~replace(., is.na(.), censoring_date))) # if empty dates (i.e. no event), then replace empty values with censoring date
+
+mydata$fi5= factor(ntile(mydata$fi.score_no_cv, 5)) # split FI into quintile groups 
+mydata$ficat = mydata$fi.cat_no_cv
+mydata$fi_transformed= (mydata$fi.score_no_cv - mean(mydata$fi.score_no_cv))/sd(mydata$fi.score_no_cv) # per 1 SD
+
+temp = mydata %>% 
+  select(csid, event_All_cause_mortality_ind = died, event_All_cause_mortality_date = date_of_death, contains("Stroke_total"), contains("IHD_total"), contains("Fatal_CVD_total"))
+
+temp = pivot_longer(temp, cols = -1, names_pattern = "(.*)(ind|date)$", names_to = c("names", ".value"))
+  # names_pattern = ()()  means look for 2 parts; (.*) means first part should have zero or more characters; (ind|date)$ means the second part should end either as ind or date
+
+temp$names = as.factor(temp$names)
+
+mylist = split(temp, f = temp$names)
+```
+
+```{r}
+names(mylist)
+```
+
+### Test proportional hazards assumptions
+
+Test PH assumption between *transformed mFI-1* and *total stroke, total IHD, and CVD mortality.*
+
+A plot that shows a non-random pattern of the Schoenfeld residuals against time is evidence of violation of the PH assumption
+
+Use `cox.zph()` function in the `survival` package to test PH assumption for each covariate included in a Cox regression model fit. It additionally performs a global test for the model as a whole.
+
+#### Total stroke
+
+Compute a Cox regression model
+
+```{r}
+source("J:/R projects/PhD-by-chapter/source codes/ckb resources/expand_age_at_risk.R")
+
+  # Merge dob_anon, study_date and rename variables
+dataset = mylist[[6]] %>% 
+  left_join(select(mydata, csid, dob_anon, study_date, fi_transformed, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
+  select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, fi_transformed, is_female)
+  
+formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + fat_body_mass_kg + poor_diet + met"))
+    
+# Expand data by age-at-risk
+dataset_long = expand_age_at_risk(df = dataset,
+                                  ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+  
+# Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+to_merge = mydata %>% 
+  select(csid, fi_transformed, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, fat_body_mass_kg, poor_diet)
+  
+dataset_long = left_join(dataset_long, to_merge, by = "csid")
+  
+# Cox proportional hazards model
+fit_mfi1_stroke = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
+  #summary(fit)
+```
+
+Test PH assumption
+
+```{r}
+test.ph = survival::cox.zph(fit_mfi1_stroke)
+test.ph
+```
+
+This is a goodness-of-fit test, which tests the correlation between the Schoenfeld residuals and survival time. A correlation of zero indicates that the model met the PH assumption (the null hypothesis).
+
+The PH assumption is not satisfied for all covariates except for FI and poor diet variable.
+
+Graph of the scaled Schoenfeld residuals against the transformed time
+
+```{r, out.width="100%"}
+test.ph.mfi1.stroke = survminer::ggcoxzph(test.ph)
+
+test.ph.mfi1.stroke
+
+ggplot2::ggsave("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/assumptions/testPH-mFi1-totalstroke.png", width=45, height=45, units="cm", gridExtra::arrangeGrob(grobs = test.ph.mfi1.stroke))
+```
+
+#### Total IHD
+
+Compute a Cox regression model
+
+```{r}
+# Merge dob_anon, study_date and rename variables
+dataset = mylist[[4]] %>% 
+  left_join(select(mydata, csid, dob_anon, study_date, fi_transformed, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
+  select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, fi_transformed, is_female)
+  
+formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + fat_body_mass_kg + poor_diet + met"))
+    
+# Expand data by age-at-risk
+dataset_long = expand_age_at_risk(df = dataset,
+                                  ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+  
+# Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+to_merge = mydata %>% 
+  select(csid, fi_transformed, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, fat_body_mass_kg, poor_diet)
+  
+dataset_long = left_join(dataset_long, to_merge, by = "csid")
+  
+# Cox proportional hazards model
+fit_mfi1_ihd = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
+  #summary(fit)
+```
+
+Test PH assumption
+
+```{r}
+test.ph.ihd = survival::cox.zph(fit_mfi1_ihd)
+test.ph.ihd
+```
+
+This is a goodness-of-fit test, which tests the correlation between the Schoenfeld residuals and survival time. A correlation of zero indicates that the model met the PH assumption (the null hypothesis).
+
+The PH assumption is not satisfied for all covariates except for FI and poor diet variable.
+
+Graph of the scaled Schoenfeld residuals against the transformed time
+
+```{r, out.width="100%"}
+test.ph.mfi1.ihd = survminer::ggcoxzph(test.ph.ihd)
+test.ph.mfi1.ihd 
+
+ggplot2::ggsave("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/assumptions/testPH-mFi1-totalihd.png", width=45, height=45, units="cm", gridExtra::arrangeGrob(grobs = test.ph.mfi1.ihd))
+```
+
+#### Total CVD mortality
+
+Compute a Cox regression model
+
+```{r}
+# Merge dob_anon, study_date and rename variables
+dataset = mylist[[2]] %>% 
+  left_join(select(mydata, csid, dob_anon, study_date, fi_transformed, is_female), by = "csid") %>% # mydata contains frailty variable and other covariates
+  select(csid, dob_anon, study_date, endpoint = ind, endpoint_date = date, fi_transformed, is_female)
+  
+formula = as.formula(paste("Surv(time_in, time_out, endpoint) ~ fi_transformed + strata(as.factor(XAgeGrp)) + is_female + region_code + household_income + marital_status + occupation + highest_education + hypertension_diag + diabetes_diag + alcohol_category + smoking_group + fat_body_mass_kg + poor_diet + met"))
+    
+# Expand data by age-at-risk
+dataset_long = expand_age_at_risk(df = dataset,
+                                  ages = c(40, 45, 50, 55, 60, 65, 70, 75, 80))
+  
+# Merge columns - expanded dataset does not contain the risk factor (frailty) or other covariates
+to_merge = mydata %>% 
+  select(csid, fi_transformed, is_female, region_code, household_income, marital_status, occupation, highest_education, met, hypertension_diag, diabetes_diag, alcohol_category, smoking_group, fat_body_mass_kg, poor_diet)
+  
+dataset_long = left_join(dataset_long, to_merge, by = "csid")
+  
+# Cox proportional hazards model
+fit_mfi1_cvd = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
+  #summary(fit)
+```
+
+Test PH assumption
+
+```{r}
+test.ph.cvd = survival::cox.zph(fit_mfi1_cvd)
+test.ph.cvd
+```
+
+This is a goodness-of-fit test, which tests the correlation between the Schoenfeld residuals and survival time. A correlation of zero indicates that the model met the PH assumption (the null hypothesis).
+
+The PH assumption is not satisfied for all covariates except for FI and poor diet variable.
+
+Graph of the scaled Schoenfeld residuals against the transformed time
+
+```{r, out.width="100%"}
+test.ph.mfi1.cvd = survminer::ggcoxzph(test.ph.cvd)
+test.ph.mfi1.cvd 
+
+ggplot2::ggsave("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/assumptions/testPH-mFi1-totalcvd.png", width=45, height=45, units="cm", gridExtra::arrangeGrob(grobs = test.ph.mfi1.cvd))
+```
