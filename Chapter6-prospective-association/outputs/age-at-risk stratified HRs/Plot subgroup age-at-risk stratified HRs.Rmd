@@ -1,0 +1,483 @@
+---
+title: "Age-at-risk stratified Cox PH analysis plots"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+
+```{r}
+library(ckbplotr)
+library(cowplot)
+library(tidyverse)
+```
+
+## Open HRs 
+
+HRs between baseline frailty and outcomes were stored in an RDS object (nested list structure)
+
+```{r}
+if (outcome == "Stroke" & fi_type == "mFI-1"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-1 and event_Stroke_total_subgroup.rds")
+  
+} else if (outcome == "IHD" & fi_type == "mFI-1"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-1 and event_IHD_total_subgroup.rds")
+  
+} else if (outcome == "CVD mortality" & fi_type == "mFI-1"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-1 and event_Fatal_CVD_total_subgroup.rds")
+  
+} else if (outcome == "All-cause mortality" & fi_type == "mFI-1"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-1 and event_All_cause_mortality_subgroup.rds")
+  
+} else if (outcome == "Stroke" & fi_type == "mFI-3"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-3 and event_Stroke_total_subgroup.rds")
+  
+} else if (outcome == "IHD" & fi_type == "mFI-3"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-3 and event_IHD_total_subgroup.rds")
+  
+} else if (outcome == "CVD mortality" & fi_type == "mFI-3"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-3 and event_Fatal_CVD_total_subgroup.rds")
+  
+} else if (outcome == "All-cause mortality" & fi_type == "mFI-3"){
+  
+  hrlist = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/subgroup analysis/HRs mFI-3 and event_All_cause_mortality_subgroup.rds")
+  
+} else {}
+```
+
+Nested within each list element:
+
+```{r}
+str(hrlist)
+```
+
+HRs for outcome per 1SD increase in FI
+
+```{r}
+hrlist[[1]]
+```
+
+Tests of hetereogeneity and trend
+
+```{r}
+hrlist[[2]]
+```
+Open overall results
+
+```{r}
+if (fi_type == "mFI-1"){
+  
+  hrlist2 = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (mFI-1) and outcomes.rds")
+  
+  if (outcome == "Stroke"){
+  
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["Stroke total"]]
+    
+  } else if (outcome == "IHD"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["IHD total"]]
+    
+  } else if (outcome == "CVD mortality"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["Fatal CVD total"]]
+    
+  } else if (outcome == "All-cause mortality"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["All cause mortality"]]
+  } else {}
+  
+} else if (fi_type == "mFI-3"){
+  
+  hrlist2 = readRDS(file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (mFI-3) and outcomes.rds")
+  
+  if (outcome == "Stroke"){
+  
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["Stroke total"]]
+    
+  } else if (outcome == "IHD"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["IHD total"]]
+    
+  } else if (outcome == "CVD mortality"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["Fatal CVD total"]]
+    
+  } else if (outcome == "All-cause mortality"){
+    
+    hrlist2 = hrlist2[["HRs FI 1SD and outcomes overall"]][["All cause mortality"]]
+  } else {}
+  
+} else {}
+
+hrlist2 = hrlist2 %>% 
+  select(estimate = beta, stderr = std.error, n) %>% 
+  mutate(heading = "Overall",
+         variable = "overall",
+         subheading = "Total events")
+
+hrlist2
+```
+## Create plots
+
+Create data frame of estimates and test results
+
+```{r}
+results = hrlist[[1]] %>% 
+  group_by(rf) %>% 
+  mutate(id = row_number()) %>% 
+  ungroup() %>% 
+  mutate(variable = paste0(rf, id)) %>% 
+  select(variable, subheading, label, estimate, stderr, n) %>% 
+  mutate(subheading = factor(subheading, levels = c("Age group",
+                                                    "Age groups",
+                                                    "Sex",
+                                                    "Region",
+                                                    "Study site",
+                                                    "Highest education",
+                                                    "Highest education level",
+                                                    "Income level",
+                                                    "Alcohol category", "Smoking category", "Smoking category (quantity)",
+                                                    "Fat mass quintile",
+                                                    "Hypertension", "Systolic blood pressure", "SBP quintile",
+                                                    "Diabetes", "Random glucose", "Random glucose quintile",
+                                                    "Physical activity quintile"))) %>% 
+  arrange(subheading) %>% 
+  mutate(across(subheading, as.character),
+         heading = "Subgroup")
+
+results = bind_rows(hrlist2, results)
+
+head(results)
+```
+
+```{r}
+tests = hrlist[[2]] %>% 
+  select(-rf) %>%
+  mutate(subheading = case_when(subheading == "agegroup" ~ "Age group",
+                                subheading == "agegroup2" ~ "Age groups",
+                                subheading == "sex" ~ "Sex",
+                                subheading == "region" ~ "Region",
+                                subheading == "region2" ~ "Study site",
+                                subheading == "education" ~ "Highest education level",
+                                subheading == "education2" ~ "Highest education",
+                                subheading == "income" ~ "Income level",
+                                subheading == "fatmass" ~ "Fat mass quintile",
+                                subheading == "alcohol" ~ "Alcohol category",
+                                subheading == "smoking" ~ "Smoking category",
+                                subheading == "smoking2" ~ "Smoking category (quantity)",
+                                subheading == "hypertension" ~ "Hypertension",
+                                subheading == "diabetes" ~ "Diabetes",
+                                subheading == "sbp" ~ "Systolic blood pressure",
+                                subheading == "glucose" ~ "Random glucose",
+                                subheading == "sbp2" ~ "SBP quintile",
+                                subheading == "glucose2" ~ "Random glucose quintile",
+                                subheading == "met" ~ "Physical activity quintile")) %>% 
+  left_join(select(results, heading, subheading, label, variable), by = c("subheading", "label"))
+
+head(tests)
+```
+
+Subset results
+
+```{r}
+covlist1 = c("Sex", "Age group", "Region", "Highest education", "Fat mass quintile", "Alcohol category", "Smoking category", "Systolic blood pressure", "Random glucose", "Total events")
+
+covlist2 = c("Age groups", "Income level", "Highest education level", "Smoking category (quantity)", "Hypertension", "SBP quintile", "Diabetes", "Random glucose quintile", "Total events")
+
+covlist3 = c("Study site", "Total events")
+```
+
+```{r}
+results1 = results %>% filter(subheading %in% covlist1)
+results2 = results %>% filter(subheading %in% covlist2)
+results3 = results %>% filter(subheading %in% covlist3)
+
+tests1 = tests %>% filter(subheading %in% covlist1)
+tests2 = tests %>% filter(subheading %in% covlist2)
+tests3 = tests %>% filter(subheading %in% covlist3)
+```
+
+Create row labels
+
+```{r}
+row_labels = results[, c("heading", "subheading", "label", "variable")]
+head(row_labels)
+
+row_labels$label = stringr::str_replace(row_labels$label, ">=", as.character(expression("\u2265"))) # add greater than or equal to sign
+
+row_labels1 = row_labels %>% filter(subheading %in% covlist1)
+row_labels2 = row_labels %>% filter(subheading %in% covlist2)
+row_labels3 = row_labels %>% filter(subheading %in% covlist3)
+```
+
+Set x-axis limits and breaks
+
+```{r}
+if (outcome == "Stroke"){
+  
+  xlim          = c(0.965, 1.21)
+  xticks        = c(1, 1.1, 1.2)
+  nullvall      = 1
+                           
+} else if (outcome == "IHD"){
+  
+  xlim          = c(1, 1.265)
+  xticks        = c(1, 1.1, 1.2)
+  nullvall      = 1
+                           
+} else if (outcome == "CVD mortality"){
+  
+  xlim          = c(1.1, 1.45)
+  xticks        = c(1.1, 1.2, 1.3, 1.4)
+  nullvall      = NULL
+                           
+} else if (outcome == "All-cause mortality"){
+
+  xlim          = c(1.1, 1.4)
+  xticks        = c(1.1, 1.3, 1.2, 1.4)
+  nullvall      = NULL
+  
+} else {}
+```
+
+Plot
+
+```{r, fig.height=10, fig.width=8}
+plot1 = ckbplotr::make_forest_plot(panels        = list(results1),
+                           col.key       = "variable",
+                           exponentiate = TRUE,
+                           row.labels    = row_labels1,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = c("Subgroup", "Overall"),
+                           panel.names = c(outcome), # outcome
+                           ci.delim      = "-",
+                           xlim          = xlim,
+                           xticks        = xticks,
+                           nullval       = nullvall,  
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.heading.space = 1.5,
+                           bold.labels   = c("heading", "subheading"), 
+                           addtext       = list(tests1),
+                           right.space   = unit(35, "mm"))$plot +
+  theme(plot.margin = unit(c(1,5,1,1), "cm")) # trbl 
+
+plot1
+```
+
+```{r}
+plot2 = ckbplotr::make_forest_plot(panels        = list(results2),
+                           col.key       = "variable",
+                           row.labels    = row_labels2,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = c("Subgroup", "Overall"),
+                           exponentiate  = TRUE,
+                           panel.names = c(outcome),
+                           ci.delim      = "-",
+                           xlim          = xlim,
+                           xticks        = xticks,
+                           nullval       = nullvall,
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.heading.space = 1.5,
+                           bold.labels   = c("heading", "subheading"), 
+                           addtext       = list(tests2),
+                           right.space   = unit(35, "mm"))$plot +
+  theme(plot.margin = unit(c(1,5,1,1), "cm")) # trbl  
+
+plot2
+```
+
+```{r}
+plot3 = ckbplotr::make_forest_plot(panels        = list(results3),
+                           col.key       = "variable",
+                           row.labels    = row_labels3,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = c("Subgroup", "Overall"),
+                           exponentiate  = TRUE,
+                           panel.names = c(outcome),
+                           ci.delim      = "-",
+                           xlim          = xlim,
+                           xticks        = xticks,
+                           nullval       = nullvall,
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.heading.space = 1.5,
+                           bold.labels   = c("heading", "subheading"), 
+                           addtext       = list(tests3),
+                           right.space   = unit(35, "mm"))$plot +
+  theme(plot.margin = unit(c(1,5,1,1), "cm")) # trbl  
+
+plot3
+```
+
+Save plot
+
+```{r}
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/subgroup/forest_", fi_type, "_", outcome, "1.png"), plot1, base_height = 10, base_asp = 0.7) # base_asp = width/height
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/subgroup/forest_", fi_type, "_", outcome, "2.png"), plot2, base_height = 10, base_asp = 0.7) # base_asp = width/height
+
+cowplot::save_plot(paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/subgroup/forest_", fi_type, "_", outcome, "3.png"), plot3, base_height = 5, base_asp = 1.5) # base_asp = width/height
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+Step 2: Remove the axis text for all but the first plot.
+
+```{r}
+p1 <- forestplot1$plot
+
+p2 <- forestplot2$plot + 
+  theme(axis.text.y = element_blank())
+```
+
+Step 3: Arrange the plots using gridExtra (there may be other packages that also work). Adjust widths until the plots are the desired widths in your final output file.
+
+```{r, fig.height=10, fig.width=8}
+final_plot = gridExtra::grid.arrange(p1, p2, nrow = 1, widths = c(1, 0.6))
+
+cowplot::save_plot("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/modified FI/HRplots_subgroups_FImodified_1SD_IHDStroke_fulladj.png", final_plot, base_height = 10, base_aspect_ratio = 0.8) # aspect ratio = width/height
+```
+
+### Subgroup analysis for fat mass quintile
+
+```{r}
+# Heterogeneity and trend tests
+test_het = as.data.frame(test_het_fatmass)
+test_het$variable = "fatmass"
+names(test_het) = c("het_stat", "het_p", "variable")
+
+test_trend = as.data.frame(test_trend_fatmass)
+test_trend$variable = "fatmass"
+names(test_trend) = c("trend_stat", "trend_p", "variable")
+
+results_extra = full_join(test_het, test_trend, by = "variable") %>% 
+  mutate(het_p = format.pval(het_p, eps=.001, digits=1),
+         trend_p = format.pval(trend_p, eps=.001, digits=1))
+
+# HRs
+final_results = bind_rows(data_fatmass)
+
+final_results
+```
+
+```{r}
+# Create group labels
+final_results = final_results %>% 
+  separate(variable, c("subheading", "label"), sep = "_", remove = FALSE) 
+
+# Select the last group level of each subgroup to merge onto results_extra
+labels_to_merge = final_results %>%
+  group_by(subheading) %>% 
+  dplyr::mutate(id = row_number()) %>% 
+  filter(id == max(id)) %>% 
+  select(variable, subheading)
+
+results_extra = results_extra %>% 
+  select(subheading = variable, everything()) %>% 
+  full_join(labels_to_merge, by = "subheading") %>% # add labels
+  select(-subheading) %>% 
+  mutate_if(is.numeric, ~as.character(round(., 1))) %>% # round statistic to 1 dp
+  mutate_at(vars(het_p, trend_p), ~if_else(grepl("^0", .), paste0("=", .), .)) # add = to pvalue
+
+# Relabel headings 
+final_results = final_results %>% 
+  mutate(subheading = "Fat mass")
+```
+
+Save data for plotting later
+
+```{r}
+stroke_results = list(final_results, results_extra)
+ihd_results = list(final_results, results_extra)
+
+#saveRDS(stroke_results, file = "J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (modified) and stroke by subgroups.rds")
+```
+
+```{r, fig.height=10, fig.width=8}
+row_labels = final_results[, c("subheading", "label", "variable")]
+row_labels$heading = "Subgroup"
+
+forestplot1a = ckbplotr::make_forest_plot(panels        = list(stroke_results[[1]]),
+                           col.key       = "variable",
+                           row.labels    = row_labels,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = "Subgroup",
+                           exponentiate  = TRUE,
+                           panel.names = c("Stroke"),
+                           ci.delim      = "-",
+                           xlim          = c(1, 1.22),
+                           xticks        = c(1, 1.1, 1.2),
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.right.heading = c("HR (95% CI)\nper 1SD FI"),
+                           col.heading.space = 1.5,
+                           addtext       = list(stroke_results[[2]]),
+                           right.space   = unit(35, "mm"))
+
+forestplot2a = ckbplotr::make_forest_plot(panels        = list(ihd_results[[1]]),
+                           col.key       = "variable",
+                           row.labels    = row_labels,
+                           row.labels.levels = c("heading", "subheading", "label"),
+                           rows          = "Subgroup",
+                           exponentiate  = TRUE,
+                           panel.names = c("IHD"),
+                           ci.delim      = "-",
+                           xlim          = c(1, 1.22),
+                           xticks        = c(1, 1.1, 1.2),
+                           blankrows     = c(1, 1, 0, 1),
+                           scalepoints   = TRUE,
+                           pointsize     = 3,
+                           col.left      = c("n"),
+                           col.left.heading = c("No. of\nevents"),
+                           col.right.heading = c("HR (95% CI)\nper 1SD FI"),
+                           col.heading.space = 1.5,
+                           addtext       = list(ihd_results[[2]]),
+                           right.space   = unit(35, "mm")) 
+```
+
+
+
+
+Merge and save plot
+
+```{r, fig.height=5, fig.width=7}
+# Step 2: Remove the axis text for all but the first plot
+p1 <- forestplot1a$plot
+
+p2 <- forestplot2a$plot + 
+  theme(axis.text.y = element_blank())
+
+# Step 3: Arrange the plots using gridExtra (there may be other packages that also work). Adjust widths until the plots are the desired widths in your final output file
+final_plot = gridExtra::grid.arrange(p1, p2, nrow = 1, widths = c(1, 0.7))
+
+cowplot::save_plot("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/modified FI/HRplots_subgroups_FImodified_1SD_IHDStroke_fulladj_fatmass.png", final_plot, base_height = 5, base_aspect_ratio = 2) # aspect ratio = width/height
+```
