@@ -8,10 +8,10 @@ ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_
 
 ### Open baseline frailty score
 
-data_baseline_fi_all = readRDS("J:/R projects/ckb-frailty-index/code/analysis/data_baseline_fi_all.rds")
+data_baseline_fi_all = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_baseline_fi_all.rds")
 
 frailty = data_baseline_fi_all %>% 
-  select(csid, fi.score_full, fi.cat_full, fi.score_no_cv, fi.cat_no_cv) %>% 
+  select(csid, fi.score_full, fi.cat_full, fi.score_no_cv, fi.cat_no_cv, fi.score_no_adiposity, fi.cat_no_adiposity, fi.score_no_21, fi.cat_no_21) %>% 
   filter(csid %in% ptlist_main_analysis) # filter participants for main analysis
 
 ### Open baseline covariates
