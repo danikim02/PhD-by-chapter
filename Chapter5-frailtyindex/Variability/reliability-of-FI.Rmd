@@ -1,0 +1,763 @@
+---
+title: "Reliability estimates for frailty"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+
+```{r}
+# Download packages required for this 
+library(boot)
+library(ckbplotr)
+library(cowplot)
+library(data.table)   # for fread() that allows importing specific columns instead of whole datasets
+library(DescTools)    # for CohenKappa()
+library(epiR)         # for epi.ccc()
+library(expss)
+library(glue)
+library(irr)          # for kappam.fleiss()
+library(knitr)        # for kable()
+#library(magrittr)     # for the assignment pipe %<>%
+library(reshape2)     # for melt()
+library(scales)
+library(tidyverse)
+```
+
+## Data
+
+### Open data
+
+```{r}
+# Open frailty data
+#ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds") 
+fi.nocv = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_cv.rds")
+fi.noad = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_adiposity.rds")
+fi.no21 = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_21.rds")
+fi.full = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_full.rds")
+
+# Open self-reported health
+mydata = data.table::fread("J:/R projects/PhD-by-chapter/data/processed_data/data_wide_frailty_vars.csv", select= c("csid", "b_poor_self_rated_health", "r1_poor_self_rated_health", "r2_poor_self_rated_health"))
+
+mydata = mydata %>% 
+  mutate(srh_r1b_change = case_when(is.na(r1_poor_self_rated_health) ~ NA_character_,
+                                      r1_poor_self_rated_health == b_poor_self_rated_health ~ "no change",
+                                      r1_poor_self_rated_health < b_poor_self_rated_health ~ "improved",
+                                      r1_poor_self_rated_health > b_poor_self_rated_health ~ "worsen"),
+         srh_r2b_change = case_when(is.na(r2_poor_self_rated_health) ~ NA_character_,
+                                      r2_poor_self_rated_health == b_poor_self_rated_health ~ "no change",
+                                      r2_poor_self_rated_health < b_poor_self_rated_health ~ "improved",
+                                      r2_poor_self_rated_health > b_poor_self_rated_health ~ "worsen")) %>% 
+  select(csid, contains("srh"))
+```
+
+### Process data
+
+Make data long
+```{r}
+make_data_long_fiscore = function(data){
+  data = data %>% 
+    select(csid, contains("fi.score")) %>% 
+    pivot_longer(b_fi.score:r2_fi.score, names_to = c("survey"), values_to = c("fi.score")) %>% 
+    filter(!is.na(fi.score)) %>% 
+    mutate(survey = factor(survey, 
+                           levels = c("b_fi.score", "r1_fi.score", "r2_fi.score"),
+                           labels = c("Baseline", "1st resurvey", "2nd resurvey")))
+  return(data)
+}
+
+make_data_long_ficat = function(data){
+  data = data %>% 
+    select(csid, contains("fi.cat")) %>% 
+    pivot_longer(b_fi.cat:r2_fi.cat, names_to = c("survey"), values_to = c("fi.cat")) %>% 
+    filter(!is.na(fi.cat)) %>% 
+    mutate(survey = factor(survey, 
+                           levels = c("b_fi.cat", "r1_fi.cat", "r2_fi.cat"),
+                           labels = c("Baseline", "1st resurvey", "2nd resurvey")))
+  return(data)
+}
+
+long_fi.full.score = make_data_long_fiscore(fi.full)
+long_fi.full.cat = make_data_long_ficat(fi.full) 
+
+long_fi.nocv.score = make_data_long_fiscore(fi.nocv)
+long_fi.nocv.cat = make_data_long_ficat(fi.nocv)
+
+long_fi.noad.score = make_data_long_fiscore(fi.noad)
+long_fi.noad.cat = make_data_long_ficat(fi.noad)
+
+long_fi.no21.score = make_data_long_fiscore(fi.no21)
+long_fi.no21.cat = make_data_long_ficat(fi.no21) 
+```
+
+## Selected characteristics of study participants at each wave
+
+```{r}
+library(tableone) 
+# Data consisting of frailty variables and frailty scores at the three different surveys in a wide format
+covariates = readRDS("J:/R projects/PhD-by-chapter/rds objects/covariates_pretty_levels_for_everyone.rds")
+```
+
+## Proportion of study participants in study region by sex
+
+```{r}
+myvars = c("age_at_study_date", "age_group", "region_is_urban", "marital_status_group", "highest_education", "household_income")
+catvars = c("age_group", "region_is_urban", "marital_status_group", "highest_education", "household_income")
+
+table0 = tableone::CreateTableOne(vars = myvars, factorVars = catvars, data = covariates)
+table1 = tableone::CreateTableOne(vars = myvars, factorVars = catvars, strata = "fu_resurvey1", data = covariates)
+table2 = tableone::CreateTableOne(vars = myvars, factorVars = catvars, strata = "fu_resurvy2", data = covariates)
+
+table0 = print(table0)
+table1 = print(table1)
+table2 = print(table2)
+
+write.csv(table0, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/table1_baseline.csv")
+write.csv(table1, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/table1_resurvey1.csv")
+write.csv(table2, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/table1_resurvey2.csv")
+```
+
+## Distribution in frailty index scores
+
+### Plot histogram by wave
+
+```{r}
+histogram_with_means = function(data, fivar, ybreaks, title){
+  
+  data = data %>% filter(!is.na({{fivar}}))  
+  
+  # Calculate mean FI by group
+  mu = data %>% 
+    summarise(n = n(),
+              grp.mean = mean({{fivar}}),
+              grp.sd = sd({{fivar}}),
+              grp.median = median({{fivar}}),
+              grp.lq = quantile({{fivar}}, prob = 0.25),
+              grp.uq = quantile({{fivar}}, prob = 0.75),
+              grp.min = min({{fivar}}),
+              grp.max = max({{fivar}})
+              ) %>% 
+    mutate(across(starts_with("grp."), round, 3))
+  
+  p = ggplot(data, aes(x={{fivar}})) +
+    geom_histogram(bins=35, color = "black", alpha = 0.5, position = "identity") +
+    geom_vline(data=mu, aes(xintercept = grp.mean), linetype = "dashed", color = "red") +
+    geom_text(data=mu, aes(label = glue::glue("n={n}; Min {grp.min}; Max {grp.max}\nMean {grp.mean} (SD {grp.sd})\nMedian {grp.median} (IQR {grp.lq}-{grp.uq})"), 
+                           x = Inf, y = Inf, hjust = 1, vjust = 1)) +
+    scale_y_continuous(breaks = ybreaks, expand = c(0,0), label = scales::comma) +
+    scale_x_continuous(limits = c(0, 0.7), breaks = seq(0, 0.7, by=0.1), expand = c(0,0)) +
+    labs(x = title, y = "Count") +
+    theme_classic()
+    
+  print(p)
+  
+  return(p)
+}
+
+hist_finocv_baseline = histogram_with_means(fi.nocv, b_fi.score,  seq(0, 100000, by= 25000), "Modified FI (baseline)")
+hist_finocv_r1 = histogram_with_means(fi.nocv, r1_fi.score, seq(0, 4000, by=1000), "Modified FI (1st resurvey)")
+hist_finocv_r2 = histogram_with_means(fi.nocv, r2_fi.score,  seq(0, 4000, by=1000),"Modified FI (2nd resurvey)")
+hist_fifull_baseline = histogram_with_means(fi.full, b_fi.score,  seq(0, 100000, by= 25000), "Original FI (baseline)")
+hist_fifull_r1 = histogram_with_means(fi.full, r1_fi.score,  seq(0, 4000, by=1000), "Original FI (1st resurvey)")
+hist_fifull_r2 = histogram_with_means(fi.full, r2_fi.score,  seq(0, 4000, by=1000), "Original FI (2nd resurvey)")
+```
+
+Combine and save data
+```{r}
+p = cowplot::plot_grid(hist_finocv_baseline, hist_finocv_r1, hist_finocv_r2,
+                       ncol = 1,
+                       align = "v") +
+     theme(plot.margin = unit(c(t=0,r=0.5,b=0,l=0), "cm"))
+
+ggsave(filename = "hist_mFI_across_waves.png", plot = p, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 8, height = 10)
+
+p
+
+p = cowplot::plot_grid(hist_fifull_baseline, hist_fifull_r1, hist_fifull_r2,
+                       ncol = 1,
+                       align = "v") +
+     theme(plot.margin = unit(c(t=0,r=0.5,b=0,l=0), "cm"))
+
+ggsave(filename = "hist_FI_across_waves.png", plot = p, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 8, height = 10)
+
+p
+```
+
+### Distribution of frailty status
+
+At baseline
+
+```{r}
+tempdata = list("Original FI" = long_fi.full.cat[long_fi.full.cat$survey=="Baseline", ],
+                "Modified FI-1" = long_fi.nocv.cat[long_fi.nocv.cat$survey=="Baseline", ],
+                "Modified FI-2" = long_fi.noad.cat[long_fi.noad.cat$survey=="Baseline", ],
+                "Modified FI-3" = long_fi.no21.cat[long_fi.no21.cat$survey=="Baseline", ])
+
+tempdata = bind_rows(tempdata, .id = "fitype")
+
+bar_frail_baseline = tempdata %>% 
+  mutate(fitype = factor(fitype, levels = c("Original FI", "Modified FI-1", "Modified FI-2", "Modified FI-3"))) %>% 
+  group_by(fitype, fi.cat) %>% 
+  summarise(n=n()) %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(x=fitype, y=pct, fill=fi.cat, label = pct)) +
+  geom_bar(stat="identity", position="stack", width=0.5) +
+  geom_text(aes(label = scales::percent(round(pct,3))), position = "stack", vjust=-0.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_brewer() +
+  xlab("") +
+  ylab("Percentage") +
+  labs(fill="Frailty group") +
+  theme_classic()
+
+bar_frail_baseline
+
+ggsave(filename = "bar_frail_baseline.png", plot = bar_frail_baseline, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6, height = 4)
+```
+
+Across waves
+
+```{r}
+# Distribution of frailty categories
+bar_frail_across_waves_fi = long_fi.full.cat %>% 
+  #mutate(fi.cat = factor(fi.cat, levels = c("Frail", "Pre-frail", "Non-frail"))) %>% 
+  group_by(survey, fi.cat) %>% 
+  summarise(n=n()) %>% 
+  mutate(pct = n/sum(n)) %>% 
+  ggplot(aes(x=survey, y=pct, fill=fi.cat, label = pct)) +
+  geom_bar(stat="identity", position="stack", width=0.5) +
+  geom_text(aes(label = scales::percent(round(pct,3))), position = "stack", vjust=-0.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Original FI") +
+  ylab("Percentage") +
+  labs(fill="Frailty group") +
+  theme_classic()
+
+bar_frail_across_waves_fi
+
+bar_frail_across_waves_mfi1 =  long_fi.nocv.cat %>% 
+  #mutate(fi.cat = factor(fi.cat, levels = c("Frail", "Pre-frail", "Non-frail"))) %>% 
+  group_by(survey, fi.cat) %>% 
+  summarise(n=n()) %>% 
+  mutate(pct = n/sum(n))%>% 
+  ggplot(aes(x=survey, y=pct, fill=fi.cat, label = pct)) +
+  geom_bar(stat="identity", position="stack", width=0.5) +
+  geom_text(aes(label = scales::percent(round(pct,3))), position = "stack", vjust=-0.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Modified FI") +
+  ylab("Percentage") +
+  labs(fill="Frailty group") +
+  theme_classic()
+
+bar_frail_across_waves_mfi1
+
+bar_frail_across_waves_mfi2 =  long_fi.nocv.cat %>% 
+  #mutate(fi.cat = factor(fi.cat, levels = c("Frail", "Pre-frail", "Non-frail"))) %>% 
+  group_by(survey, fi.cat) %>% 
+  summarise(n=n()) %>% 
+  mutate(pct = n/sum(n))%>% 
+  ggplot(aes(x=survey, y=pct, fill=fi.cat, label = pct)) +
+  geom_bar(stat="identity", position="stack", width=0.5) +
+  geom_text(aes(label = scales::percent(round(pct,3))), position = "stack", vjust=-0.5) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_brewer(palette = "Set2") +
+  xlab("Modified FI") +
+  ylab("Percentage") +
+  labs(fill="Frailty group") +
+  theme_classic()
+
+bar_frail_across_waves_mfi2
+
+ggsave(filename = "bar_frail_across_waves_FI.png", plot = bar_frail_across_waves_fi, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6, height = 4)
+ggsave(filename = "bar_frail_across_waves_mFI1.png", plot = bar_frail_across_waves_mfi1, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6, height = 4)
+ggsave(filename = "bar_frail_across_waves_mFI2.png", plot = bar_frail_across_waves_mfi2, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6, height = 4)
+```
+
+## Agreement
+
+*Participants with data across all three waves*
+
+Subset participants (14901) with data across all three waves
+
+```{r}
+# Select participants followed-up at every time-point
+fi.full1 = fi.full[complete.cases(fi.full), ]
+fi.nocv1 = fi.nocv[complete.cases(fi.nocv), ]
+fi.noad1 = fi.noad[complete.cases(fi.noad), ]
+fi.no211 = fi.no21[complete.cases(fi.no21), ]
+```
+
+### Agreement in frailty scores
+
+Calculate Lin's concordance correlation coefficient
+```{r}
+Lins_CCC = function(data){
+  
+ ccc_br1 = epiR::epi.ccc(data[["b_fi.score"]], data[["r1_fi.score"]])$rho.c
+ ccc_br1_lab = glue::glue("{round(ccc_br1[[1]], 3)} ({round(ccc_br1[[2]], 3)}-{round(ccc_br1[[3]], 3)})")
+ 
+ ccc_br2 = epiR::epi.ccc(data[["b_fi.score"]], data[["r2_fi.score"]])$rho.c
+ ccc_br2_lab = glue::glue("{round(ccc_br2[[1]], 3)} ({round(ccc_br2[[2]], 3)}-{round(ccc_br2[[3]], 3)})")
+ 
+ ccc_r1r2 = epiR::epi.ccc(data[["r1_fi.score"]], data[["r2_fi.score"]])$rho.c
+ ccc_r1r2_lab = glue::glue("{round(ccc_r1r2[[1]], 3)} ({round(ccc_r1r2[[2]], 3)}-{round(ccc_r1r2[[3]], 3)})")
+ 
+ output = data.frame(
+   study = c("Baseline & 1st resurvey", "Baseline & 2nd resurvey", "1st & 2nd resurvey"),
+   ccc = c(ccc_br1_lab, ccc_br2_lab, ccc_r1r2_lab)
+ )
+
+ return(output)
+}
+
+lins_ccc_fi = Lins_CCC(fi.full1)
+lins_ccc_mfi1 = Lins_CCC(fi.nocv1)
+lins_ccc_mfi2 = Lins_CCC(fi.noad1)
+lins_ccc_mfi3 = Lins_CCC(fi.no211)
+
+colnames(lins_ccc_fi) = c("study", "ccc.fi")
+colnames(lins_ccc_mfi1) = c("study", "ccc.mfi1")
+colnames(lins_ccc_mfi2) = c("study", "ccc.mfi2")
+colnames(lins_ccc_mfi3) = c("study", "ccc.mfi3")
+
+lins_ccc = lins_ccc_fi %>% 
+  left_join(lins_ccc_mfi1, by = "study") %>% 
+  left_join(lins_ccc_mfi2, by = "study") %>% 
+  left_join(lins_ccc_mfi3, by = "study")
+
+lins_ccc
+
+write.csv(lins_ccc, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/lins_ccc.csv")
+```
+
+Intraclass correlation coefficient 
+```{r}
+irr::icc(fi.full1[, c("b_fi.score", "r1_fi.score", "r2_fi.score")], model="twoway", type="agreement", unit="single") # model for test-retest design uses = a single-measurement, absolute agreement, 2-way mixed effects model (Koo and Li, 2017, J Chiropr Med)
+
+irr::icc(fi.nocv1[, c("b_fi.score", "r1_fi.score", "r2_fi.score")], model="twoway", type="agreement", unit="single")
+
+irr::icc(fi.noad1[, c("b_fi.score", "r1_fi.score", "r2_fi.score")], model="twoway", type="agreement", unit="single")
+
+irr::icc(fi.no211[, c("b_fi.score", "r1_fi.score", "r2_fi.score")], model="twoway", type="agreement", unit="single")
+```
+
+### Agreement in frailty categorisation
+
+Cross-tabulation
+
+```{r}
+crosstab = function(data, rowvar, colvar, title){
+  
+  temp = data %>% 
+    select(row = {{rowvar}}, col = {{colvar}})
+  
+  xtab = temp %>% 
+   expss::tab_cells(row) %>% # tab_cells = left-hand side of table, i.e. what goes into rows
+   expss::tab_cols(col) %>% # tab_cols = what goes into columns
+   expss::tab_total_row_position("none") %>%
+   expss::tab_stat_cases() %>% # counts
+   #tab_stat_cpct(label = "col %") %>% # tab_stat_cpct = column percentages
+   expss::tab_stat_rpct(label = "row %") %>% 
+   #tab_stat_tpct(label = "table %") %>% # tab_stat_tpct = table percentages
+   expss::tab_pivot(stat_position = "outside_rows") %>% 
+   expss::set_caption(title)
+  
+  print(xtab)
+  
+  return(xtab)
+}
+
+xtab_mFI_br1 = crosstab(fi.nocv1, b_fi.cat, r1_fi.cat, "Agreement in modified FI categorisation between baseline and 1st resurvey")
+xtab_mFI_br2 = crosstab(fi.nocv1, b_fi.cat, r2_fi.cat, "Agreement in modified FI categorisation between baseline and 2nd resurvey")
+xtab_mFI_r1r2 = crosstab(fi.nocv1, r1_fi.cat, r2_fi.cat, "Agreement in modified FI categorisation between 1st and 2nd resurvey")
+xtab_FI_br1 = crosstab(fi.full1, b_fi.cat, r1_fi.cat, "Agreement in original FI categorisation between baseline and 1st resurvey")
+xtab_FI_br2 = crosstab(fi.full1, b_fi.cat, r2_fi.cat, "Agreement in original FI categorisation between baseline and 2nd resurvey")
+xtab_FI_r1r2 = crosstab(fi.full1, r1_fi.cat, r2_fi.cat, "Agreement in original FI categorisation between 1st and 2nd resurvey")
+```
+
+```{r}
+write.csv(xtab_mFI_br1, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_mFI_br1.csv")
+write.csv(xtab_mFI_br2, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_mFI_br2.csv")
+write.csv(xtab_mFI_r1r2, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_mFI_r1r2.csv")
+write.csv(xtab_FI_br1, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_FI_br1.csv")
+write.csv(xtab_FI_br2, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_FI_br2.csv")
+write.csv(xtab_FI_r1r2, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/xtab_FI_r1r2.csv")
+```
+
+Cohen's Weighted kappa
+
+```{r}
+weighted_kappa = function(data){
+  
+ wkappa_br1 = DescTools::CohenKappa(table(data[["b_fi.cat"]], data[["r1_fi.cat"]]), weights = "Fleiss-Cohen", conf.level=0.95) 
+   # requires confusion matrix (i.e. cross tabulation)
+   # Fleiss-Cohen = quadratic weights
+ wkappa_br1_lab = glue::glue("{round(wkappa_br1[[1]], 3)} ({round(wkappa_br1[[2]], 3)}-{round(wkappa_br1[[3]], 3)})")
+ 
+ wkappa_br2 = DescTools::CohenKappa(table(data[["b_fi.cat"]], data[["r2_fi.cat"]]), weights = "Fleiss-Cohen", conf.level=0.95) 
+   # requires confusion matrix (i.e. cross tabulation)
+   # Fleiss-Cohen = quadratic weights
+ wkappa_br2_lab = glue::glue("{round(wkappa_br2[[1]], 3)} ({round(wkappa_br2[[2]], 3)}-{round(wkappa_br2[[3]], 3)})")
+ 
+ wkappa_r1r2 = DescTools::CohenKappa(table(data[["r1_fi.cat"]], data[["r2_fi.cat"]]), weights = "Fleiss-Cohen", conf.level=0.95) 
+   # requires confusion matrix (i.e. cross tabulation)
+   # Fleiss-Cohen = quadratic weights
+ wkappa_r1r2_lab = glue::glue("{round(wkappa_r1r2[[1]], 3)} ({round(wkappa_r1r2[[2]], 3)}-{round(wkappa_r1r2[[3]], 3)})")
+ 
+ output = data.frame(
+   study = c("Baseline & 1st resurvey", "Baseline & 2nd resurvey", "1st & 2nd resurvey"),
+   wkappa = c(wkappa_br1_lab, wkappa_br2_lab, wkappa_r1r2_lab)
+ )
+ 
+ return(output)
+}
+
+weighted_kappa_fi = weighted_kappa(fi.full1)
+weighted_kappa_mfi1 = weighted_kappa(fi.nocv1)
+weighted_kappa_mfi2 = weighted_kappa(fi.noad1)
+weighted_kappa_mfi3 = weighted_kappa(fi.no211)
+
+colnames(weighted_kappa_fi) = c("study", "wkappa.fi")
+colnames(weighted_kappa_mfi1) = c("study", "wkappa.mfi1")
+colnames(weighted_kappa_mfi2) = c("study", "wkappa.mfi2")
+colnames(weighted_kappa_mfi3) = c("study", "wkappa.mfi3")
+
+weighted_kappa = weighted_kappa_fi %>% 
+  left_join(weighted_kappa_mfi1, by = "study") %>% 
+  left_join(weighted_kappa_mfi2, by = "study") %>% 
+  left_join(weighted_kappa_mfi3, by = "study")
+
+weighted_kappa
+
+write.csv(weighted_kappa, "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability/weighted_kappa.csv")
+```
+
+Intraclass kappa statistic (baseline and r1)
+
+```{r}
+kappa_fi.full = irr::icc(fi.full1[ ,c("b_fi.frail","r1_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("FI: {round(kappa_fi.full$value, 3)} ({round(kappa_fi.full$lbound, 3)}-{round(kappa_fi.full$ubound, 3)})")
+
+kappa_fi.nocv = irr::icc(fi.nocv1[ ,c("b_fi.frail","r1_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("mFI: {round(kappa_fi.nocv$value, 3)} ({round(kappa_fi.nocv$lbound, 3)}-{round(kappa_fi.nocv$ubound, 3)})")
+```
+
+Intraclass kappa statistic (baseline and r2)
+
+```{r}
+kappa_fi.nocv = irr::icc(fi.nocv1[ ,c("b_fi.frail","r2_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("mFI: {round(kappa_fi.nocv$value, 3)} ({round(kappa_fi.nocv$lbound, 3)}-{round(kappa_fi.nocv$ubound, 3)})")
+
+kappa_fi.full = irr::icc(fi.full1[ ,c("b_fi.frail","r2_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("FI: {round(kappa_fi.full$value, 3)} ({round(kappa_fi.full$lbound, 3)}-{round(kappa_fi.full$ubound, 3)})")
+```
+Intraclass kappa statistic (r1 and r2)
+
+```{r}
+kappa_fi.nocv = irr::icc(fi.nocv1[ ,c("r1_fi.frail","r2_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("mFI: {round(kappa_fi.nocv$value, 3)} ({round(kappa_fi.nocv$lbound, 3)}-{round(kappa_fi.nocv$ubound, 3)})")
+
+kappa_fi.full = irr::icc(fi.full1[ ,c("r1_fi.frail","r2_fi.frail")], model="twoway", type="agreement", unit="single")
+glue::glue("FI: {round(kappa_fi.full$value, 3)} ({round(kappa_fi.full$lbound, 3)}-{round(kappa_fi.full$ubound, 3)})")
+```
+**By age group**
+
+```{r}
+fi.nocv1 = fi.nocv1 %>% left_join(select(mydata, csid, age_group), by = "csid")
+fi.full1 = fi.full1 %>% left_join(select(mydata, csid, age_group), by = "csid")
+
+intraclasskappa_subgroup = function(data, survey){
+  
+  for (each in c("30-59", "60-69", "70-79")){
+  
+    tempdata = data[data$age_group==each, ]
+  
+    kappa = irr::icc(tempdata[ , survey], model="twoway", type="agreement", unit="single")
+  
+    print(each)
+    print(glue::glue("{round(kappa$value, 3)} ({round(kappa$lbound, 3)}-{round(kappa$ubound, 3)})"))
+  
+  }
+
+}
+
+intraclasskappa_subgroup(fi.nocv1, c("r1_fi.frail","r2_fi.frail"))
+intraclasskappa_subgroup(fi.full1, c("r1_fi.frail","r2_fi.frail"))
+```
+
+####  Agreement for multiple 'raters' (here, multiple time-points) using Fleiss' kappa
+
+The assumptions for computing the Fleiss kappa are (Fleiss, 1971):
+
+-   The outcome variables should be categorical.
+
+-   The outcome variables should have exactly the same categories.
+
+-   The raters are independent.
+
+-   The same sets of raters are not needed.
+
+```{r}
+fleisskappa_mfi = irr::kappam.fleiss(fi.nocv1[ , c("b_fi.cat", "r1_fi.cat", "r2_fi.cat")], detail = TRUE)
+fleisskappa_fi = irr::kappam.fleiss(fi.full1[ , c("b_fi.cat", "r1_fi.cat", "r2_fi.cat")], detail = TRUE)
+
+fleisskappa_fi
+fleisskappa_mfi
+```
+
+The interpretation of the magnitude of the kappa is the same as that of the classical Cohen's kappa in most settings.
+
+-   Values &ge;0.75 = excellent agreement beyond chance.
+
+-   Values &le;0.40 = poor agreement beyond chance.
+
+-   Values between 0.40 and 0.75 = fair to good agreement beyond chance.
+
+Also, `detail=TRUE` of `irr::kappam.fleiss()` function allows us to assess the individual kappas for each of the categories separately against all other categories combined. 
+
+Low agreement in frailty categorisation across study waves. The 'Frail' group has the poorest agreement across waves, whilst the 'Non-frail' group has the highest agreement.
+
+## ANOVA for within-person variance of the frailty scores
+
+Modified FI
+
+```{r}
+res.aov.fi.nocv = aov(fi.score ~ csid, data = long_fi.nocv.score)
+anova.results.mFI = summary(res.aov.fi.nocv) 
+  # square root of the value called the residual mean square is the within-subject variance
+  # other value is the between-subject variance
+anova.results.mFI
+
+withinSD.mFI = anova.results.mFI[[1]]$`Mean Sq`[[2]]
+betweenSD.mFI = anova.results.mFI[[1]]$`Mean Sq`[[1]]
+```
+
+The within-person SD of mFI score over the study follow-up is `r round(sqrt(withinSD.mFI),3)`.
+
+Original FI
+
+```{r}
+res.aov.fi.full = aov(fi.score ~ csid, data = long_fi.full.score)
+anova.results.FI = summary(res.aov.fi.full) 
+  # square root of the value called the residual mean square is the within-subject variance
+  # other value is the between-subject variance
+anova.results.FI
+
+withinSD.FI = anova.results.FI[[1]]$`Mean Sq`[[2]]
+betweenSD.FI = anova.results.FI[[1]]$`Mean Sq`[[1]]
+```
+
+The within-person SD of FI score over the study follow-up is `r round(sqrt(withinSD.FI),3)`.
+
+### Compute bootstrap confidence interval for between- and within-person variance
+
+```{r within-var}
+# Create function to compute my estimator
+withinvarEstimator = function(data, i) { 
+  d = data[i, "var"]
+  withinsd = sqrt(mean(d))
+  return(withinsd)
+}
+
+# Create function to compute my estimator
+betvarEstimator = function(data, i) { 
+  d = data[i, "mean"]
+  betsd = sqrt(2*var(d))
+  return(betsd)
+}
+
+# Create function to compute my estimator
+semEstimator = function(data, i) { 
+  d = data[i, "1"]
+  sd = sapply(d, sd) 
+  sem = sd*sqrt(1-icc) 
+  return(sem)
+}
+
+mdcEstimator = function(data, i) { 
+  d = data[i, "1"]
+  sd = sapply(d, sd) 
+  sem = sd*sqrt(1-icc)
+  mdc = sem*1.96*sqrt(2)
+  return(mdc)
+}
+
+# Create function to compute my estimator
+micEstimator = function(data, i) { 
+  d = data[i, ]
+  m1 = mean(d[srh_r1b_change=="worsen", change_in_fi_r1b], na.rm=TRUE)
+  m2 = mean(d[srh_r1b_change=="no change", change_in_fi_r1b], na.rm=TRUE)
+  m = m1 - m2
+  return(m)
+}
+```
+
+Create long dataset
+
+```{r}
+long_fi.full.score1 = make_data_long_fiscore(fi.full1)
+long_fi.nocv.score1 = make_data_long_fiscore(fi.nocv1)
+long_fi.noad.score1 = make_data_long_fiscore(fi.noad1)
+long_fi.no21.score1 = make_data_long_fiscore(fi.no211)
+```
+
+Create functions to run analyses
+
+```{r}
+make_wide_DT = function(data){
+  
+  DT = data %>% 
+    select(-survey) %>% 
+    group_by(csid) %>% 
+    mutate(num = row_number()) %>% # create row numbers by csid - each participant should have 3 observations
+    ungroup() %>% 
+    arrange(csid) %>% 
+    as.data.table() 
+
+  DT = data.table::dcast(DT, csid ~ num, value.var = "fi.score") # make data wide
+  
+  DT$mean = apply(DT[ ,2:4], 1, mean) # take the mean of v1 and v2 
+  DT$var = apply(DT[ ,2:4], 1, var) # take the variance of v1 and v
+
+  DT = left_join(DT, mydata, by="csid") %>% 
+    mutate(change_in_fi_r1b = `2`-`1`,
+           change_in_fi_r2b = `3`-`1`)
+  
+  return(DT)
+}
+
+```
+
+### Original FI
+
+```{r}
+widedata_fi = make_wide_DT(long_fi.full.score1)
+icc = 0.484
+#
+#boot.withinsd = boot(widedata_fi, withinvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#withinsd.ci = boot.ci(boot.withinsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#withinsd.ci$t0 # observed estimate
+#withinsd.ci
+#
+#boot.betsd = boot(widedata_fi, betvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#betsd.ci = boot.ci(boot.betsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#betsd.ci$t0 # observed estimate
+#betsd.ci
+#
+#boot.sem = boot(widedata_fi, semEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#sem.ci = boot.ci(boot.sem, conf = 0.95, type = c("bca")) # Get confidence intervals
+#sem.ci$t0 # observed estimate
+#sem.ci
+#
+#boot.mdc = boot(widedata_fi, mdcEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#mdc.ci = boot.ci(boot.mdc, conf = 0.95, type = c("bca")) # Get confidence intervals
+#mdc.ci$t0 # observed estimate
+#mdc.ci
+
+boot.mic = boot(widedata_fi, micEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+mic.ci = boot.ci(boot.mic, conf = 0.95, type = c("bca")) # Get confidence intervals
+mic.ci$t0 # observed estimate
+mic.ci
+```
+
+### Modified FI-1
+
+```{r}
+widedata_fi = make_wide_DT(long_fi.nocv.score1)
+icc = 0.417
+#
+#boot.withinsd = boot(widedata_fi, withinvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#withinsd.ci = boot.ci(boot.withinsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#withinsd.ci$t0 # observed estimate
+#withinsd.ci
+#
+#boot.betsd = boot(widedata_fi, betvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#betsd.ci = boot.ci(boot.betsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#betsd.ci$t0 # observed estimate
+#betsd.ci
+#
+#boot.sem = boot(widedata_fi, semEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#sem.ci = boot.ci(boot.sem, conf = 0.95, type = c("bca")) # Get confidence intervals
+#sem.ci$t0 # observed estimate
+#sem.ci
+#
+#boot.mdc = boot(widedata_fi, mdcEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#mdc.ci = boot.ci(boot.mdc, conf = 0.95, type = c("bca")) # Get confidence intervals
+#mdc.ci$t0 # observed estimate
+#mdc.ci
+
+boot.mic = boot(widedata_fi, micEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+mic.ci = boot.ci(boot.mic, conf = 0.95, type = c("bca")) # Get confidence intervals
+mic.ci$t0 # observed estimate
+mic.ci
+```
+
+### Modified FI-2
+
+```{r}
+widedata_fi = make_wide_DT(long_fi.noad.score1)
+icc = 0.427
+
+#boot.withinsd = boot(widedata_fi, withinvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#withinsd.ci = boot.ci(boot.withinsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#withinsd.ci$t0 # observed estimate
+#withinsd.ci
+#
+#boot.betsd = boot(widedata_fi, betvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#betsd.ci = boot.ci(boot.betsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+#betsd.ci$t0 # observed estimate
+#betsd.ci
+#
+#boot.sem = boot(widedata_fi, semEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#sem.ci = boot.ci(boot.sem, conf = 0.95, type = c("bca")) # Get confidence intervals
+#sem.ci$t0 # observed estimate
+#sem.ci
+#
+#boot.mdc = boot(widedata_fi, mdcEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+#mdc.ci = boot.ci(boot.mdc, conf = 0.95, type = c("bca")) # Get confidence intervals
+#mdc.ci$t0 # observed estimate
+#mdc.ci
+
+boot.mic = boot(widedata_fi, micEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+mic.ci = boot.ci(boot.mic, conf = 0.95, type = c("bca")) # Get confidence intervals
+mic.ci$t0 # observed estimate
+mic.ci
+```
+
+### Modified FI-3
+
+```{r}
+widedata_fi = make_wide_DT(long_fi.no21.score1)
+icc = 0.360
+
+boot.withinsd = boot(widedata_fi, withinvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+withinsd.ci = boot.ci(boot.withinsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+withinsd.ci$t0 # observed estimate
+withinsd.ci
+
+boot.betsd = boot(widedata_fi, betvarEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+betsd.ci = boot.ci(boot.betsd, conf = 0.95, type = c("bca")) # Get confidence intervals
+betsd.ci$t0 # observed estimate
+betsd.ci
+
+boot.sem = boot(widedata_fi, semEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+sem.ci = boot.ci(boot.sem, conf = 0.95, type = c("bca")) # Get confidence intervals
+sem.ci$t0 # observed estimate
+sem.ci
+
+boot.mdc = boot(widedata_fi, mdcEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+mdc.ci = boot.ci(boot.mdc, conf = 0.95, type = c("bca")) # Get confidence intervals
+mdc.ci$t0 # observed estimate
+mdc.ci
+
+boot.mic = boot(widedata_fi, micEstimator, R=15000) # R = number of bootstrap samples (must be greater than number of observations)
+mic.ci = boot.ci(boot.mic, conf = 0.95, type = c("bca")) # Get confidence intervals
+mic.ci$t0 # observed estimate
+mic.ci
+```
