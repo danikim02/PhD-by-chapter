@@ -21,37 +21,45 @@ library(tidyverse)
 ### Open data
 
 ```{r}
-ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds") 
-widedata = readRDS("J:/R projects/PhD-by-chapter/data/processed_data/data_wide_fi_no_cv.rds")
+#ptlist_main_analysis = readRDS("J:/R projects/PhD-by-chapter/rds objects/ptlist_main_analysis.rds") 
+fi.nocv = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_cv.rds")
+fi.noad = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_adiposity.rds")
+fi.no21 = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_no_21.rds")
+fi.full = readRDS("J:/R projects/PhD-by-chapter/data/scripts/data_wide_fi_full.rds")
 
 # Study entry dates
 study_entry_base = data.table::fread("J:/R projects/PhD-by-chapter/data/raw_data/data_baseline_questionnaires.csv", select = c("csid", "study_date"))
 study_entry_resurvey1 = data.table::fread("J:/R projects/PhD-by-chapter/data/raw_data/data_resurvey1_questionnaires.csv", select = c("csid", "study_date"))
 study_entry_resurvey2 = data.table::fread("J:/R projects/PhD-by-chapter/data/raw_data/data_resurvey2_questionnaires.csv", select = c("csid", "study_date"))
-
-widedata = widedata %>% 
-  left_join(select(study_entry_base, csid, study_date_base = study_date), by = "csid") %>% 
-  left_join(select(study_entry_resurvey1, csid, study_date_resurvey1 = study_date), by = "csid") %>% 
-  left_join(select(study_entry_resurvey2, csid, study_date_resurvey2 = study_date), by = "csid") %>% 
-  mutate(across(contains("_date"), ~as.Date(.)))
-  
-widedata = widedata[widedata$csid %in% ptlist_main_analysis, ]
 ```
 
 ### Process data
 
-Add new variable (FI quintile groups at baseline)
-
 ```{r}
-widedata$fi5= factor(ntile(widedata$b_fi.score, 5)) # split FI into quintile groups based on baseline scores
-```
+process_data = function(data){
+  
+  # Add dates
+  data = data %>% 
+   left_join(select(study_entry_base, csid, study_date_base = study_date), by = "csid") %>% 
+   left_join(select(study_entry_resurvey1, csid, study_date_resurvey1 = study_date), by = "csid") %>% 
+   left_join(select(study_entry_resurvey2, csid, study_date_resurvey2 = study_date), by = "csid") %>% 
+   mutate(across(contains("_date"), ~as.Date(.)))
+  
+  # Calculate number of days between each study entry
+  data$days_from_base_to_resurvey1 =  data$study_date_resurvey1 - data$study_date_base
+  data$days_from_base_to_resurvey2 =  data$study_date_resurvey2 - data$study_date_base
+  data$days_from_resurvey1_to_resurvey2 =  data$study_date_resurvey2 - data$study_date_resurvey1
+  
+  # Add new variable (FI quintile groups at baseline
+  data$fi5= factor(ntile(data$b_fi.score, 5)) # split FI into quintile groups based on baseline scores
 
-Calculate number of days between each study entry
+  return(data)
+}
 
-```{r}
-widedata$days_from_base_to_resurvey1 =  widedata$study_date_resurvey1 - widedata$study_date_base
-widedata$days_from_base_to_resurvey2 =  widedata$study_date_resurvey2 - widedata$study_date_base
-widedata$days_from_resurvey1_to_resurvey2 =  widedata$study_date_resurvey2 - widedata$study_date_resurvey1
+fi.full = process_data(fi.full)
+fi.nocv = process_data(fi.nocv)
+fi.noad = process_data(fi.noad)
+fi.no21 = process_data(fi.no21)
 ```
 
 ### Subset data 
@@ -59,96 +67,145 @@ widedata$days_from_resurvey1_to_resurvey2 =  widedata$study_date_resurvey2 - wid
 1. Has baseline and 1st resurvey data
 
 ```{r}
-anyNA(widedata$b_fi.score)
+subset_data_base_and_1st = function(widedata){
+  
+  temp = pull(widedata[which(!is.na(widedata$r1_fi.score)), ], csid)
+  output = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r1_fi.score", "fi5", "days_from_base_to_resurvey1")]
+  
+  return(output)
+}
 
-temp = pull(widedata[which(!is.na(widedata$r1_fi.score)), ], csid)
-widedata1 = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r1_fi.score", "fi5", "days_from_base_to_resurvey1")]
+widedata_br1_fi = subset_data_base_and_1st(fi.full)
+widedata_br1_mfi1 = subset_data_base_and_1st(fi.nocv)
+widedata_br1_mfi2 = subset_data_base_and_1st(fi.noad)
+widedata_br1_mfi3 = subset_data_base_and_1st(fi.no21)
+
+nrow(widedata_br1_fi)
 ```
-
-`r nrow(widedata1)` participants
 
 2. Has baseline and 2nd resurvey data
 
 ```{r}
-temp = pull(widedata[which(!is.na(widedata$r2_fi.score)), ], csid)
+subset_data_base_and_2nd = function(widedata){
+  
+  temp = pull(widedata[which(!is.na(widedata$r2_fi.score)), ], csid)
+  output = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r2_fi.score", "fi5", "days_from_base_to_resurvey2")]
+  
+  return(output)
+}
 
-widedata2 = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r2_fi.score", "fi5", "days_from_base_to_resurvey2")]
+widedata_br2_fi = subset_data_base_and_2nd(fi.full)
+widedata_br2_mfi1 = subset_data_base_and_2nd(fi.nocv)
+widedata_br2_mfi2 = subset_data_base_and_2nd(fi.noad)
+widedata_br2_mfi3 = subset_data_base_and_2nd(fi.no21)
+
+nrow(widedata_br2_fi)
 ```
-
-`r nrow(widedata2)` participants
 
 2. Has baseline and 1st and 2nd resurvey data
 
 ```{r}
-temp = pull(widedata[which(!(is.na(widedata$r2_fi.score) | is.na(widedata$r1_fi.score))), ], csid)
+subset_data_1st_and_2nd = function(widedata){
+  
+  temp = pull(widedata[which(!(is.na(widedata$r2_fi.score) | is.na(widedata$r1_fi.score))), ], csid)
+  output = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r1_fi.score", "r2_fi.score", "fi5", "days_from_base_to_resurvey2", "days_from_base_to_resurvey1")]
+  
+  return(output)
+}
 
-widedata3 = widedata[widedata$csid %in% temp, c("csid", "b_fi.score", "r1_fi.score", "r2_fi.score", "fi5", "days_from_base_to_resurvey2", "days_from_base_to_resurvey1")]
+widedata_r1r2_fi = subset_data_1st_and_2nd(fi.full)
+widedata_r1r2_mfi1 = subset_data_1st_and_2nd(fi.nocv)
+widedata_r1r2_mfi2 = subset_data_1st_and_2nd(fi.noad)
+widedata_r1r2_mfi3 = subset_data_1st_and_2nd(fi.no21)
+
+nrow(widedata_r1r2_fi)
 ```
-
-`r nrow(widedata3)` participants
 
 ## Assess variability in frailty index scores
 
 ### Change in mean FI between baseline and first resurvey in quintile groups defined by baseline frailty
 
 ```{r}
-# Make data long
-fivar = widedata1 %>%
-  pivot_longer(cols = contains("fi.score"), names_to = "survey", values_to = "fi.score") %>% 
-  mutate(survey = if_else(survey == "b_fi.score", "Baseline", "First resurvey"))
+mean_frailty_change = function(data, title, string_wave1, string_wave2, days_n, x_breaks, ylab){
+  
+  long_data = data %>% 
+    pivot_longer(cols = contains("fi.score"), names_to = "survey", values_to = "fi.score") %>% 
+    mutate(survey = if_else(survey == "b_fi.score", string_wave1, string_wave2))
+  
+  # Compute mean FI score and interval between baseline and resurvey by baseline FI quintile groups
+  to_plot = long_data %>% 
+    group_by(survey, fi5) %>% 
+    summarise(mean = mean(fi.score),
+              mean_interval_days = mean({{days_n}}))
+  
+  # Make intervals start from 0 at baseline
+  to_plot = to_plot %>% 
+    mutate(mean_interval_days = if_else(survey == "Baseline", lubridate::make_difftime(0, units = "day"), mean_interval_days))
 
-# Compute mean FI score and interval between baseline and resurvey by baseline FI quintile groups
-to_plot = fivar %>% 
-  group_by(survey, fi5) %>% 
-  summarise(mean = mean(fi.score),
-            mean_interval_days = mean(days_from_base_to_resurvey1))
+  p = to_plot %>% 
+    ggplot(aes(x = mean_interval_days/365.25, y = mean, color = survey, label = round(mean,2))) +
+    geom_point(aes(fill = survey), shape = 22) +
+    geom_line(aes(group = fi5), color = "black") +
+    geom_text(size = 3, color = "black", vjust = 0, nudge_y = 0.005) +
+    scale_y_continuous(limits = c(0, 0.205), breaks = c(0, 0.05, 0.10, 0.15, 0.20)) +
+    scale_x_continuous(breaks = x_breaks) +
+    labs(x = "Mean interval between measurements (years)",
+         y = ylab) +
+    ggtitle(title) +
+    theme_classic() +
+    theme(aspect.ratio = 4/3, # ratio y/x
+          legend.position = "none",
+          plot.title = element_text(hjust=0.5),
+          axis.title.x = element_text(size=9)) 
+  
+  print(p)
+  
+  output = list(to_plot, p)
+  
+  return(output)    
+  
+}
 
-# Make intervals start from 0 at baseline
-to_plot = to_plot %>% 
-  mutate(mean_interval_days = if_else(survey == "Baseline", lubridate::make_difftime(0, units = "day"), mean_interval_days))
+mean_frailty_change_br1_fi = mean_frailty_change(widedata_br1_fi, "Original FI", "Baseline", "1st resurvey", days_from_base_to_resurvey1, c(0, 0.5, 1, 1.5, 2, 2.5, 3), "Mean FI score")
+mean_frailty_change_br1_mfi1 = mean_frailty_change(widedata_br1_mfi1, "Modified FI-1", "Baseline", "1st resurvey", days_from_base_to_resurvey1, c(0, 0.5, 1, 1.5, 2, 2.5, 3), "Mean FI score")
+mean_frailty_change_br1_mfi2 = mean_frailty_change(widedata_br1_mfi2, "Modified FI-2", "Baseline", "1st resurvey", days_from_base_to_resurvey1, c(0, 0.5, 1, 1.5, 2, 2.5, 3), "Mean FI score")
+mean_frailty_change_br1_mfi3 = mean_frailty_change(widedata_br1_mfi3, "Modified FI-3", "Baseline", "1st resurvey", days_from_base_to_resurvey1, c(0, 0.5, 1, 1.5, 2, 2.5, 3), "Mean FI score")
+```
 
-p = to_plot %>% 
-  ggplot(aes(x = mean_interval_days/365.25, y = mean, color = survey, label = round(mean,2))) +
-  geom_point(aes(fill = survey), shape = 22) +
-  geom_line(aes(group = fi5), color = "black") +
-  geom_text(size = 3, color = "black", vjust = 0, nudge_y = 0.005) +
-  scale_x_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3)) +
-  labs(x = "Mean interval between measurements (years)",
-       y = "Mean frailty index score") +
-  theme_classic() +
-  theme(aspect.ratio = 4/3) # ratio y/x
+Combine and save plots
+
+```{r}
+p = cowplot::plot_grid(mean_frailty_change_br1_fi[[2]], mean_frailty_change_br1_mfi1[[2]], 
+                       mean_frailty_change_br1_mfi2[[2]], mean_frailty_change_br1_mfi3[[2]],
+                       nrow = 2,
+                       align = "h") +
+     theme(plot.margin = unit(c(t=0,r=0.5,b=0,l=0), "cm"))
+
 p
+
+ggsave(filename = "plot_change_in_fi_br1.png", plot = p, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6.5, height = 8)
 ```
 
 ### Change in mean FI between baseline and second resurvey in quintile groups defined by baseline frailty
 
 ```{r}
-# Make data long
-fivar = widedata2 %>%
-  pivot_longer(cols = contains("fi.score"), names_to = "survey", values_to = "fi.score") %>% 
-  mutate(survey = if_else(survey == "b_fi.score", "Baseline", "Second resurvey"))
+mean_frailty_change_br2_fi = mean_frailty_change(widedata_br2_fi, "Original FI", "Baseline", "2nd resurvey", days_from_base_to_resurvey2, seq(0,8,2), "Mean FI score")
+mean_frailty_change_br2_mfi1 = mean_frailty_change(widedata_br2_mfi1, "Modified FI-1", "Baseline", "2nd resurvey", days_from_base_to_resurvey2, seq(0,8,2), "Mean FI score")
+mean_frailty_change_br2_mfi2 = mean_frailty_change(widedata_br2_mfi2, "Modified FI-2", "Baseline", "2nd resurvey", days_from_base_to_resurvey2, seq(0,8,2), "Mean FI score")
+mean_frailty_change_br2_mfi3 = mean_frailty_change(widedata_br2_mfi3, "Modified FI-3", "Baseline", "2nd resurvey", days_from_base_to_resurvey2, seq(0,8,2), "Mean FI score")
+```
+Combine and save plots
 
-# Compute mean FI score and interval between baseline and resurvey by baseline FI quintile groups
-to_plot = fivar %>% 
-  group_by(survey, fi5) %>% 
-  summarise(mean = mean(fi.score),
-            mean_interval_days = mean(days_from_base_to_resurvey2))
+```{r}
+p = cowplot::plot_grid(mean_frailty_change_br2_fi[[2]], mean_frailty_change_br2_mfi1[[2]], 
+                       mean_frailty_change_br2_mfi2[[2]], mean_frailty_change_br2_mfi3[[2]],
+                       nrow = 2,
+                       align = "h") +
+     theme(plot.margin = unit(c(t=0,r=0.5,b=0,l=0), "cm"))
 
-# Make intervals start from 0 at baseline
-to_plot = to_plot %>% 
-  mutate(mean_interval_days = if_else(survey == "Baseline", lubridate::make_difftime(0, units = "day"), mean_interval_days))
-
-p = to_plot %>% 
-  ggplot(aes(x = mean_interval_days/365.25, y = mean, color = survey, label = round(mean,2))) +
-  geom_point(aes(fill = survey), shape = 22) +
-  geom_line(aes(group = fi5), color = "black") +
-  geom_text(size = 3, color = "black", vjust = 0, nudge_y = 0.005) +
-  scale_x_continuous(breaks = c(0, 1, 2, 3, 4, 5, 6, 7, 8)) +
-  labs(x = "Mean interval between measurements (years)",
-       y = "Mean frailty index score") +
-  theme_classic() +
-  theme(aspect.ratio = 4/3) # ratio y/x
 p
+
+ggsave(filename = "plot_change_in_fi_br2.png", plot = p, path = "J:/R projects/PhD-by-chapter/Chapter5-frailtyindex/Variability", width = 6.5, height = 8)
 ```
 
 ### Change in mean FI between baseline and first and second resurveys in quintile groups defined by baseline frailty

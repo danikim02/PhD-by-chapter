@@ -32,10 +32,10 @@ Nested within each of the `r length(hrlist)` list elements:
 names(hrlist)
 ```
 
-Are HRs between baseline frailty and the following 23 outcomes:
+Are HRs for...:
 
 ```{r}
-names(hrlist[[1]])
+hrlist[1]
 ```
 
 Select IHD total and stroke total using continuous exposure
@@ -141,27 +141,27 @@ plot <- ggplot(data = hrlist[[1]][[1]],
   scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
   
   # Add titles
-  xlab("Frailty index quintiles") +
+  xlab("FI quintiles") +
   ylab("Hazard ratio (95% CI)") +
   ggtitle("IHD") +
 
-  # Plot n events text and HRs per 1SD increase in FI
+  #Plot n events text and HRs per 1SD increase in FI
   geom_text(aes(y = 1.99,
                 x = 3,
                 label = "(49,937 cases)"),
-            size  = 3) +
+            size  = 3.5) +
   geom_text(aes(y = 1.75,
                 x = 3,
-                label = "HR (95%CI): 1.16 (1.14-1.17)\nper 1SD increase"),
+                label = "HR (95%CI): 1.16 (1.15-1.17)\nper 1SD increase"),
             size  = 3.5)
-  
-# Plot like a CKB plot
+
+  # Plot like a CKB plot
 plot_ihd = ckbplotr::plot_like_ckb(plot           = plot,
                                    xlims          = c(1, 5),
-                                   ylims          = c(0.85, 2),
+                                   ylims          = c(0.85, 2), # c(0.85, 2)
                                    gap            = c(0.05, 0.025),
                                    ext            = c(0.025, 0.025),
-                                   ratio          = 1.5,
+                                   ratio          = 1, # 1.5
                                    base_size      = 11,
                                    base_line_size = 0.5)
 ```
@@ -211,7 +211,7 @@ plot <- ggplot(data = hrlist[[2]][[1]],
   scale_y_continuous(trans = "log", breaks = c(1, 1.5, 2)) +
   
   # Add titles
-  xlab("Frailty index quintiles") +
+  xlab("FI quintiles") +
   ylab("Hazard ratio (95% CI)") +
   ggtitle("Stroke") +
 
@@ -219,19 +219,19 @@ plot <- ggplot(data = hrlist[[2]][[1]],
   geom_text(aes(y = 1.99,
                 x = 3,
                 label = "(54,193 cases)"),
-            size  = 3) +
+            size  = 3.5) +
   geom_text(aes(y = 1.75,
                 x = 3,
-                label = "HR (95%CI): 1.07 (1.06-1.08)\nper 1SD increase"),
+                label = "HR (95%CI): 1.08 (1.07-1.09)\nper 1SD increase"),
             size  = 3.5)
-  
+ 
   # Plot like a CKB plot
   plot_stroke = ckbplotr::plot_like_ckb(plot           = plot,
                                        xlims          = c(1, 5),
                                        ylims          = c(0.85, 2),
                                        gap            = c(0.05, 0.025),
                                        ext            = c(0.025, 0.025),
-                                       ratio          = 1.5,
+                                       ratio          = 1, #1.5
                                        base_size      = 11,
                                        base_line_size = 0.5)
  
@@ -241,8 +241,10 @@ Combine and save plot
 ```{r, fig.width=10, fig.height=10}
 p = cowplot::plot_grid(plot_stroke, plot_ihd,
                            ncol=2, nrow=1, align = "hv")
+p
+cowplot::save_plot("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/modified FI/HRplots_FImodified_quintile_IHDStroke_fulladj_v2.png", p, base_height = 4, base_aspect_ratio = 2)
 
-title = ggdraw() + draw_label("Figure 1. Association between baseline frailty index, stroke, and IHD", fontface='bold')
+title = ggdraw() + draw_label("Figure 1. Association between baseline modified frailty index, stroke, and IHD", fontface='bold')
 
 plot1 = plot_grid(title, p, ncol=1, rel_heights=c(0.1, 1)) # rel_heights values control title margins
 plot1
