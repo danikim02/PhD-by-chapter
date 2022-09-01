@@ -61,12 +61,7 @@ mydata = mydata %>%
 kable(head(mydata)) %>% kableExtra::kable_styling()
 ```
 
-Split FI into quintile groups
-
-```{r fi-process, eval=FALSE, include=FALSE}
-mydata$fi5= factor(ntile(mydata$fi.score_no_cv, 5)) # split FI into quintile groups 
-mydata$ficat = mydata$fi.cat_no_cv
-```
+Split FI into quintile groups and create transformed continuous variables
 
 ```{r fi-type}
 if (fi_type == "original"){
@@ -74,18 +69,21 @@ if (fi_type == "original"){
   mydata$fi5= factor(ntile(mydata$fi.score_full, 5)) # split FI into quintile groups 
   mydata$ficat = mydata$fi.cat_full
   mydata$fi_transformed= (mydata$fi.score_full - mean(mydata$fi.score_full))/sd(mydata$fi.score_full) # per 1 SD
+  mydata$fi_0.1 = mydata$fi.score_full/0.1 # per 0.1 unit
 
 } else if (fi_type == "mFI-1"){
   
   mydata$fi5= factor(ntile(mydata$fi.score_no_cv, 5)) # split FI into quintile groups 
   mydata$ficat = mydata$fi.cat_no_cv
   mydata$fi_transformed= (mydata$fi.score_no_cv - mean(mydata$fi.score_no_cv))/sd(mydata$fi.score_no_cv) # per 1 SD
+  mydata$fi_0.1 = mydata$fi.score_no_cv/0.1 # per 0.1 unit
   
 } else if (fi_type == "mFI-3"){
   
   mydata$fi5= factor(ntile(mydata$fi.score_no_21, 5)) # split FI into quintile groups 
   mydata$ficat = mydata$fi.cat_no_21
   mydata$fi_transformed= (mydata$fi.score_no_21 - mean(mydata$fi.score_no_21))/sd(mydata$fi.score_no_21) # per 1 SD
+  mydata$fi_0.1 = mydata$fi.score_no_21/0.1 # per 0.1 unit
   
 } else {
    
@@ -164,7 +162,7 @@ run_age_at_risk_cox_model = function(dataset, frailty, sex){
   fit = survival::coxph(formula, data = dataset_long, ties = "breslow") # the expanded dataframe contains 'XAgeGrp' column which can be used to stratify the CoxPH model, the time columns specify the start and end time for intervals
   #summary(fit)
   
-  if (frailty == "fi_transformed"){
+  if (frailty == "fi_transformed" | frailty == "fi_0.1"){
     
     # Compute onfidence intervals
     results = fit %>% 
@@ -205,17 +203,13 @@ run_age_at_risk_cox_model = function(dataset, frailty, sex){
 Run function on each outcome
 
 ```{r run-age-at-risk-analysis, message=FALSE, error=FALSE}
-hrlist_fi5_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "T")
-#hrlist_fi5_m = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "M")
-#hrlist_fi5_f = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "F")
+#hrlist_fi5_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi5", sex = "T")
 
-hrlist_ficat_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "T")
-#hrlist_ficat_m = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "M")
-#hrlist_ficat_f = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "F")
+#hrlist_ficat_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "ficat", sex = "T")
 
-hrlist_fi1sd_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi_transformed", sex = "T")
-#hrlist_fi1sd_m = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi_transformed", sex = "M")
-#hrlist_fi1sd_f = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi_transformed", sex = "F")
+#hrlist_fi1sd_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi_transformed", sex = "T")
+
+hrlist_fi0.1_t = lapply(mylist, run_age_at_risk_cox_model, frailty = "fi_0.1", sex = "T")
 ```
 
 Rename and reorder list
@@ -239,15 +233,18 @@ rename_reorder_list = function(mylist){
                     "Fatal CVD total", "All cause mortality")]
 }
 
-hrlist = list(hrlist_fi5_t, hrlist_ficat_t, hrlist_fi1sd_t)
+#hrlist = list(hrlist_fi5_t, hrlist_ficat_t, hrlist_fi1sd_t, hrlist_fi0.1_t)
 
-names(hrlist) = c("HRs FI quintile and outcomes overall", "HRs FI level and outcomes overall", "HRs FI 1SD and outcomes overall")
+#names(hrlist) = c("HRs FI quintile and outcomes overall", "HRs FI level and outcomes overall", "HRs FI 1SD and outcomes overall", "HRs FI 0.1 unit and outcomes overall")
 
-hrlist = lapply(hrlist, rename_reorder_list)
+#hrlist = lapply(hrlist, rename_reorder_list)
+
+hrlist = rename_reorder_list(hrlist_fi0.1_t)
 ```
 
 Save output for plotting later
 
 ```{r save-output}
-saveRDS(hrlist, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (", fi_type, ") and outcomes.rds"))
+#saveRDS(hrlist, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline FI (", fi_type, ") and outcomes.rds"))
+saveRDS(hrlist, file = paste0("J:/R projects/PhD-by-chapter/Chapter6-prospective-association/rds objects/output data/HRs baseline 0.1 unit FI (", fi_type, ") and outcomes.rds"))
 ```
