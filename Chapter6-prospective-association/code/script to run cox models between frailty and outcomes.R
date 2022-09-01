@@ -54,6 +54,16 @@ for (fi_type in mylist){
   
 }
 
+library(rmarkdown)
+
+mylist = list("Original FI", "mFI-1", "mFI-3") 
+
+for (fi_type in mylist){
+  
+  rmarkdown::render('J:/R projects/PhD-by-chapter/Chapter6-prospective-association/outputs/age-at-risk stratified HRs/Associations-per0.1unitFI.R') # location of R file to be run
+  
+}
+
 ########################################################################
 #### Script to run subgroup analysis for age-at-risk stratified HRs ####
 ########################################################################
